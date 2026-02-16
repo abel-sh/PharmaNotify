@@ -1,46 +1,44 @@
-# =============================================================================
-# Configuración del Servidor TCP
-# =============================================================================
-SERVER_HOST = "localhost"
-SERVER_PORT = 9999
+import os
+from dotenv import load_dotenv
 
-# Ruta del Unix Domain Socket para la comunicación con el monitor (IPC)
-MONITOR_SOCKET_PATH = "/tmp/pharma_monitor.sock"
+# load_dotenv() busca el archivo .env y carga sus variables.
+# Con este path explícito siempre lo encuentra sin importar desde dónde se ejecute el programa.
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 # =============================================================================
-# Configuración de MariaDB
+# Servidor TCP
 # =============================================================================
-DB_HOST = "localhost"
-DB_PORT = 3306
-DB_NAME = "pharma_db"
-DB_USER = "pharma_user"
-DB_PASSWORD = "pharma_pass"
+SERVER_HOST = os.getenv("SERVER_HOST", "localhost")
+SERVER_PORT  = int(os.getenv("SERVER_PORT", 9999))  # int() porque getenv devuelve strings
+
+MONITOR_SOCKET_PATH = os.getenv("MONITOR_SOCKET_PATH", "/tmp/pharma_monitor.sock")
 
 # =============================================================================
-# Configuración de Redis
+# MariaDB
 # =============================================================================
-REDIS_HOST = "localhost"
-REDIS_PORT = 6379
-REDIS_DB = 0  # Redis maneja múltiples bases de datos numeradas, usamos la 0
-
-# URL completa de Redis, que es el formato que necesita Celery como broker
-REDIS_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
-
-# Canal pub/sub donde los workers publican notificaciones
-# El servidor estará suscrito a este canal
-REDIS_NOTIFICATIONS_CHANNEL = "pharma:notifications"
+DB_HOST     = os.getenv("DB_HOST", "localhost")
+DB_PORT     = int(os.getenv("DB_PORT", 3306))
+DB_NAME     = os.getenv("DB_NAME", "pharma_db")
+DB_USER     = os.getenv("DB_USER", "pharma_user")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "pharma_pass")
 
 # =============================================================================
-# Configuración de Celery
+# Redis
 # =============================================================================
-CELERY_BROKER_URL = REDIS_URL
-CELERY_RESULT_BACKEND = REDIS_URL
+REDIS_HOST    = os.getenv("REDIS_HOST", "localhost")
+REDIS_PORT    = int(os.getenv("REDIS_PORT", 6379))
+REDIS_DB      = int(os.getenv("REDIS_DB", 0)) # Redis no tiene bases de datos con nombres como MariaDB, sino que tiene bases de datos numeradas del 0 al 15. El 0 es el que se usa por defecto.
+REDIS_URL     = f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
+REDIS_NOTIFICATIONS_CHANNEL = os.getenv("REDIS_NOTIFICATIONS_CHANNEL", "pharma:notifications")
 
-# Cada cuántos segundos Celery Beat verifica los vencimientos
-VERIFICATION_INTERVAL_SECONDS = 60
+# =============================================================================
+# Celery
+# =============================================================================
+CELERY_BROKER_URL      = REDIS_URL
+CELERY_RESULT_BACKEND  = REDIS_URL # Dónde guardar los resultados de las tareas ejecutadas
+VERIFICATION_INTERVAL_SECONDS = int(os.getenv("VERIFICATION_INTERVAL_SECONDS", 60))
 
 # =============================================================================
-# Configuración de notificaciones por defecto
+# Notificaciones
 # =============================================================================
-# Días de anticipación para notificar sobre medicamentos próximos a vencer
-DEFAULT_ALERT_THRESHOLD_DAYS = 7
+DEFAULT_ALERT_THRESHOLD_DAYS = int(os.getenv("DEFAULT_ALERT_THRESHOLD_DAYS", 7)) # Umbral por defecto de días de anticipación para generar alertas de vencimient
