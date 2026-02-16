@@ -11,6 +11,7 @@ packaging==26.0
 prompt_toolkit==3.0.52
 PyMySQL==1.1.2
 python-dateutil==2.9.0.post0
+python-dotenv==1.2.1
 redis==6.4.0
 six==1.17.0
 tzdata==2025.3
