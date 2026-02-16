@@ -1,2 +1,19 @@
-/temp
-/venv
+# IDE
+.vscode/
+
+# Entorno virtual
+venv/
+
+# Variables de entorno (contienen credenciales)
+.env
+
+# Caché de Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Socket de IPC (se crea en tiempo de ejecución)
+*.sock
+
+# Otros archivos
+temp/
