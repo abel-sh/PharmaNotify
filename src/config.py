@@ -41,4 +41,4 @@ VERIFICATION_INTERVAL_SECONDS = int(os.getenv("VERIFICATION_INTERVAL_SECONDS", 6
 # =============================================================================
 # Notificaciones
 # =============================================================================
-DEFAULT_ALERT_THRESHOLD_DAYS = int(os.getenv("DEFAULT_ALERT_THRESHOLD_DAYS", 7)) # Umbral por defecto de días de anticipación para generar alertas de vencimient
+DEFAULT_ALERT_THRESHOLD_DAYS = int(os.getenv("DEFAULT_ALERT_THRESHOLD_DAYS", 7)) # Umbral por defecto de días de anticipación para generar alertas de vencimiento
