@@ -17,9 +17,16 @@ from .config import (
     DEFAULT_ALERT_THRESHOLD_DAYS
 )
 
+# Exponemos las funciones del protocolo de comunicación
+from .protocol import (
+    enviar_mensaje,
+    recibir_mensaje
+)
+
 __all__ = [
     'SERVER_HOST', 'SERVER_PORT',
     'DB_HOST', 'DB_PORT', 'DB_NAME', 'DB_USER', 'DB_PASSWORD',
     'REDIS_HOST', 'REDIS_PORT', 'REDIS_NOTIFICATIONS_CHANNEL',
     'DEFAULT_ALERT_THRESHOLD_DAYS',
+     'enviar_mensaje', 'recibir_mensaje'
 ]
