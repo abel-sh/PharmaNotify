@@ -83,6 +83,7 @@ ejecutar_sql "Tabla 'farmacias'" "
         id          INT AUTO_INCREMENT PRIMARY KEY,
         nombre      VARCHAR(100) NOT NULL UNIQUE,
         umbral_dias INT NOT NULL DEFAULT 7,
+        activo      BOOLEAN NOT NULL DEFAULT TRUE,
         creado_en   DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 "
