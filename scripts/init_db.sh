@@ -3,7 +3,7 @@
 #
 # Script de inicialización de la base de datos.
 # Lee la configuración desde el archivo .env ubicado en final/.
-# Crea las tablas necesarias para el sistema de notificaciones.
+# Crea la base de datos y las tablas necesarias para el sistema de notificaciones.
 #
 # Uso: bash scripts/init_db.sh  (ejecutar desde el directorio final/)
 
@@ -11,8 +11,6 @@
 # Cargar variables desde .env
 # =============================================================================
 
-# dirname "$0" devuelve el directorio donde está este script (scripts/).
-# Desde ahí subimos un nivel con /.. para llegar a final/, donde vive el .env.
 ENV_FILE="$(dirname "$0")/../.env"
 
 if [ -f "$ENV_FILE" ]; then
@@ -25,58 +23,65 @@ fi
 
 # =============================================================================
 # Configuración con valores por defecto
-#
-# La sintaxis ${VARIABLE:-default} significa: "usá el valor de VARIABLE si
-# existe y no está vacía, de lo contrario usá default". Es la forma bash de
-# hacer lo mismo que os.getenv("VARIABLE", "default") en Python.
 # =============================================================================
 DB_HOST="${DB_HOST:-localhost}"
 DB_PORT="${DB_PORT:-3306}"
 DB_NAME="${DB_NAME:-pharma_db}"
 DB_USER="${DB_USER:-pharma_user}"
-DB_PASS="${DB_PASSWORD:-pharma_pass}"  # En bash usamos DB_PASS como nombre local
-                                       # para no pisar la variable DB_PASSWORD del entorno
+DB_PASS="${DB_PASSWORD:-pharma_pass}"
 
 # =============================================================================
 # Verificar que el cliente mysql está disponible en el sistema
 # =============================================================================
 
-# 'command -v mysql' devuelve la ruta del ejecutable si existe, o nada si no.
-# El '!' niega el resultado: si mysql NO está disponible, entramos al if.
 if ! command -v mysql &> /dev/null; then
     echo "Error: el cliente 'mysql' no está instalado o no está en el PATH."
     exit 1
 fi
 
 # =============================================================================
-# Función auxiliar para ejecutar SQL y reportar el resultado
+# FASE 1: Crear la base de datos si no existe
 # =============================================================================
-ejecutar_sql() {
-    local descripcion="$1"  # Primer argumento: nombre legible de la operación
-    local sql="$2"           # Segundo argumento: la sentencia SQL a ejecutar
+echo ""
+echo "Conectando a MariaDB en ${DB_HOST}:${DB_PORT}..."
+echo ""
 
-    # Pasamos el SQL directamente al cliente mysql con -e (execute).
-    # El 2>&1 redirige los errores de stderr a stdout para poder capturarlos.
+# Acá nos conectamos SIN especificar ninguna base de datos (sin el parámetro $DB_NAME)
+# Solo nos autenticamos con usuario y contraseña, y ejecutamos el CREATE DATABASE
+echo "Creando base de datos '${DB_NAME}' si no existe..."
+mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -p"$DB_PASS" -e "CREATE DATABASE IF NOT EXISTS ${DB_NAME};" 2>&1
+
+if [ $? -eq 0 ]; then
+    echo "  ✓ Base de datos '${DB_NAME}' lista"
+else
+    echo "  ✗ Error al crear la base de datos"
+    echo "  Verificá las credenciales y que el usuario tenga permisos para crear bases de datos."
+    exit 1
+fi
+
+# =============================================================================
+# FASE 2: Crear las tablas dentro de la base de datos
+# =============================================================================
+echo ""
+echo "Inicializando tablas en '${DB_NAME}'..."
+echo ""
+
+# Función auxiliar para ejecutar SQL y reportar el resultado
+# AHORA sí especificamos $DB_NAME porque ya sabemos que existe
+ejecutar_sql() {
+    local descripcion="$1"
+    local sql="$2"
+
     mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -p"$DB_PASS" "$DB_NAME" -e "$sql" 2>&1
 
-    # $? es el código de salida del último comando ejecutado.
-    # 0 significa éxito; cualquier otro valor indica un error.
     if [ $? -eq 0 ]; then
         echo "  ✓ $descripcion"
     else
         echo "  ✗ Error al crear: $descripcion"
         echo "  Abortando inicialización."
-        exit 1  # Detenemos el script inmediatamente ante cualquier falla
+        exit 1
     fi
 }
-
-# =============================================================================
-# Inicio del proceso
-# =============================================================================
-echo ""
-echo "Conectando a MariaDB en ${DB_HOST}:${DB_PORT}..."
-echo "Inicializando base de datos '${DB_NAME}'..."
-echo ""
 
 ejecutar_sql "Tabla 'farmacias'" "
     CREATE TABLE IF NOT EXISTS farmacias (
