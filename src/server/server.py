@@ -6,7 +6,15 @@ from src.shared import (
     SERVER_HOST, SERVER_PORT,
     enviar_mensaje, recibir_mensaje
 )
-from src.db.database import get_async_connection
+
+from src.db.database import (
+    get_async_connection,
+    crear_medicamento,
+    listar_medicamentos,
+    buscar_medicamento,
+    actualizar_medicamento,
+    eliminar_medicamento
+)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Logger de este módulo
@@ -36,27 +44,29 @@ async def obtener_resumen_estado(conn, farmacia_id: int) -> dict:
     """
     async with conn.cursor() as cursor:
 
-        # Cuántos medicamentos activos tiene esta farmacia
         await cursor.execute(
             "SELECT COUNT(*) FROM medicamentos WHERE farmacia_id = %s AND activo = TRUE",
             (farmacia_id,)
         )
         (total_activos,) = await cursor.fetchone()
 
-        # Cuántas notificaciones todavía no leyó
         await cursor.execute(
             "SELECT COUNT(*) FROM notificaciones WHERE farmacia_id = %s AND leida = FALSE",
             (farmacia_id,)
         )
         (notificaciones_no_leidas,) = await cursor.fetchone()
 
-        # Medicamentos que vencieron mientras la farmacia estuvo desconectada
-        # (activo = FALSE porque el worker los desactivó automáticamente)
+        # Ahora el filtro es preciso: solo medicamentos desactivados
+        # automáticamente por Celery cuando su fecha de vencimiento pasó.
+        # Los eliminados manualmente por el usuario tienen motivo_baja = 'eliminado_manual'
+        # y no tienen nada que hacer en esta sección del resumen.
         await cursor.execute(
             """
             SELECT nombre, fecha_vencimiento
             FROM medicamentos
-            WHERE farmacia_id = %s AND activo = FALSE
+            WHERE farmacia_id = %s 
+              AND activo = FALSE 
+              AND motivo_baja = 'vencido_automatico'
             ORDER BY fecha_vencimiento DESC
             LIMIT 10
             """,
@@ -74,6 +84,62 @@ async def obtener_resumen_estado(conn, farmacia_id: int) -> dict:
         "notificaciones_no_leidas": notificaciones_no_leidas,
         "vencidos_mientras_ausente": vencidos_lista
     }
+
+
+async def manejar_crud(conn, writer: asyncio.StreamWriter, farmacia_id: int, mensaje: dict) -> None:
+    """
+    Recibe un mensaje del cliente, identifica la acción solicitada,
+    ejecuta la operación correspondiente en la BD, y responde al cliente.
+    
+    Es el "despachador central" del servidor: cada acción tiene su rama,
+    y todas terminan enviando un diccionario de respuesta al cliente.
+    """
+    accion = mensaje.get("accion", "")
+
+    if accion == "crear_medicamento":
+        resultado = await crear_medicamento(
+            conn,
+            farmacia_id,
+            mensaje.get("codigo", ""),
+            mensaje.get("nombre", ""),
+            mensaje.get("fecha_vencimiento", "")
+        )
+        logger.info(f"[farmacia_id={farmacia_id}] crear_medicamento '{mensaje.get('codigo')}' → {resultado['ok']}")
+        await enviar_mensaje(writer, {"tipo": "respuesta", **resultado})
+
+    elif accion == "listar_medicamentos":
+        resultado = await listar_medicamentos(conn, farmacia_id)
+        logger.info(f"[farmacia_id={farmacia_id}] listar_medicamentos → {len(resultado.get('medicamentos', []))} registros")
+        await enviar_mensaje(writer, {"tipo": "respuesta", **resultado})
+
+    elif accion == "buscar_medicamento":
+        resultado = await buscar_medicamento(conn, farmacia_id, mensaje.get("codigo", ""))
+        logger.info(f"[farmacia_id={farmacia_id}] buscar_medicamento '{mensaje.get('codigo')}' → {resultado['ok']}")
+        await enviar_mensaje(writer, {"tipo": "respuesta", **resultado})
+
+    elif accion == "actualizar_medicamento":
+        resultado = await actualizar_medicamento(
+            conn,
+            farmacia_id,
+            mensaje.get("codigo", ""),
+            mensaje.get("nombre"),           # puede ser None
+            mensaje.get("fecha_vencimiento") # puede ser None
+        )
+        logger.info(f"[farmacia_id={farmacia_id}] actualizar_medicamento '{mensaje.get('codigo')}' → {resultado['ok']}")
+        await enviar_mensaje(writer, {"tipo": "respuesta", **resultado})
+
+    elif accion == "eliminar_medicamento":
+        resultado = await eliminar_medicamento(conn, farmacia_id, mensaje.get("codigo", ""))
+        # Las eliminaciones se loguean con WARNING según el plan del proyecto
+        logger.warning(f"[farmacia_id={farmacia_id}] eliminar_medicamento '{mensaje.get('codigo')}' → {resultado['ok']}")
+        await enviar_mensaje(writer, {"tipo": "respuesta", **resultado})
+
+    else:
+        logger.warning(f"[farmacia_id={farmacia_id}] Acción desconocida recibida: '{accion}'")
+        await enviar_mensaje(writer, {
+            "tipo": "error",
+            "mensaje": f"Acción '{accion}' no reconocida."
+        })
 
 
 async def manejar_cliente(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
@@ -159,8 +225,7 @@ async def manejar_cliente(reader: asyncio.StreamReader, writer: asyncio.StreamWr
             mensaje = await recibir_mensaje(reader)
             if mensaje is None:
                 break
-            logger.info(f"[{farmacia_nombre}] Mensaje recibido: {mensaje}")
-            # TODO 
+            await manejar_crud(conn, writer, farmacia_id, mensaje)
 
     except asyncio.IncompleteReadError:
         # Se lanza cuando el cliente cierra la conexión abruptamente
