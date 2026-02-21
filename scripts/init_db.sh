@@ -94,17 +94,21 @@ ejecutar_sql "Tabla 'farmacias'" "
 "
 
 ejecutar_sql "Tabla 'medicamentos'" "
-    CREATE TABLE IF NOT EXISTS medicamentos (
-        id                INT AUTO_INCREMENT PRIMARY KEY,
-        farmacia_id       INT NOT NULL,
-        codigo            VARCHAR(50) NOT NULL,
-        nombre            VARCHAR(150) NOT NULL,
-        fecha_vencimiento DATE NOT NULL,
-        activo            BOOLEAN NOT NULL DEFAULT TRUE,
-        creado_en         DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (farmacia_id) REFERENCES farmacias(id),
-        UNIQUE KEY uq_farmacia_codigo (farmacia_id, codigo)
-    );
+    CREATE TABLE medicamentos (
+    id                 INT AUTO_INCREMENT PRIMARY KEY,
+    farmacia_id        INT NOT NULL,
+    codigo             VARCHAR(50) NOT NULL,
+    nombre             VARCHAR(100) NOT NULL,
+    fecha_vencimiento  DATE NOT NULL,
+    activo             BOOLEAN DEFAULT TRUE,
+    -- NULL significa que el medicamento está activo.
+    -- Se completa solo cuando activo pasa a FALSE, y distingue
+    -- si fue el usuario quien lo eliminó o Celery quien lo venció.
+    motivo_baja        ENUM('eliminado_manual', 'vencido_automatico') DEFAULT NULL,
+    creado_en          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (farmacia_id) REFERENCES farmacias(id),
+    UNIQUE (farmacia_id, codigo)
+);
 "
 
 ejecutar_sql "Tabla 'notificaciones'" "
