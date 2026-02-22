@@ -13,6 +13,7 @@ from .config import (
     DB_PASSWORD,
     REDIS_HOST,
     REDIS_PORT,
+    REDIS_DB,
     REDIS_NOTIFICATIONS_CHANNEL,
     DEFAULT_ALERT_THRESHOLD_DAYS
 )
@@ -29,7 +30,7 @@ from .protocol import (
 __all__ = [
     'SERVER_HOST', 'SERVER_PORT',
     'DB_HOST', 'DB_PORT', 'DB_NAME', 'DB_USER', 'DB_PASSWORD',
-    'REDIS_HOST', 'REDIS_PORT', 'REDIS_NOTIFICATIONS_CHANNEL',
+    'REDIS_HOST', 'REDIS_PORT', 'REDIS_DB', 'REDIS_NOTIFICATIONS_CHANNEL',
     'DEFAULT_ALERT_THRESHOLD_DAYS',
     'obtener_logger',
     'enviar_mensaje', 'recibir_mensaje'
