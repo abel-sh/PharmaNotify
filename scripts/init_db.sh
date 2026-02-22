@@ -94,7 +94,7 @@ ejecutar_sql "Tabla 'farmacias'" "
 "
 
 ejecutar_sql "Tabla 'medicamentos'" "
-    CREATE TABLE medicamentos (
+    CREATE TABLE IF NOT EXISTS medicamentos (
     id                 INT AUTO_INCREMENT PRIMARY KEY,
     farmacia_id        INT NOT NULL,
     codigo             VARCHAR(50) NOT NULL,

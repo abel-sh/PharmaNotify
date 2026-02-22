@@ -1,17 +1,17 @@
 import asyncio
 import argparse
 import json
-import redis.asyncio as aioredis
 
 from src.shared import (
     SERVER_HOST, SERVER_PORT,
-    REDIS_HOST, REDIS_PORT, REDIS_DB, REDIS_NOTIFICATIONS_CHANNEL,
+    REDIS_NOTIFICATIONS_CHANNEL,
     enviar_mensaje, recibir_mensaje,
     obtener_logger
 )
 
 from src.infrastructure import (
     get_async_connection,
+    get_async_redis_client,
     crear_medicamento,
     listar_medicamentos,
     buscar_medicamento,
@@ -45,7 +45,7 @@ async def escuchar_notificaciones_redis():
     Redis es el sujeto observable, y esta corrutina es el observador.
     """
     # Creamos un cliente Redis asíncrono para no bloquear el event loop.
-    cliente = aioredis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB)
+    cliente = get_async_redis_client()
     pubsub  = cliente.pubsub()
 
     # Nos suscribimos al canal. A partir de este momento, Redis nos enviará
@@ -70,21 +70,6 @@ async def escuchar_notificaciones_redis():
                 payload = json.loads(mensaje_raw["data"].decode("utf-8"))
                 farmacia_id = payload.get("farmacia_id")
                 mensaje_texto = payload.get("mensaje", "")
-
-                # Buscamos en el diccionario global si esa farmacia está conectada.
-                # Para hacer la búsqueda necesitamos el nombre, no el id.
-                # Por eso buscamos el writer que corresponde a esa farmacia.
-                # clientes_conectados tiene como clave el nombre normalizado,
-                # así que necesitamos otra forma de encontrar al cliente por id.
-                # La solución es iterar sobre los conectados y buscar por farmacia_id.
-                # En el Issue #12 (IPC) refinaremos esta estructura si es necesario.
-                writer_destino = None
-                for nombre, writer in clientes_conectados.items():
-                    # Cada writer tiene asociado el farmacia_id en su transport.
-                    # Como no lo guardamos directamente, necesitamos un enfoque
-                    # alternativo: extendemos clientes_conectados para guardar
-                    # también el id. Ver nota abajo.
-                    pass
 
                 # NOTA: para poder buscar por farmacia_id necesitamos cambiar
                 # clientes_conectados para que guarde también el id.
@@ -248,6 +233,15 @@ async def manejar_crud(conn, writer: asyncio.StreamWriter, farmacia_id: int, men
         )
         await enviar_mensaje(writer, {"tipo": "respuesta", **resultado})
 
+    elif accion == "resumen_estado":
+        resultado = await obtener_resumen_estado(conn, farmacia_id)
+        logger.info(
+            f"[farmacia_id={farmacia_id}] resumen_estado solicitado manualmente"
+        )
+        # obtener_resumen_estado ya devuelve el tipo "resumen_estado",
+        # que es exactamente el formato que espera mostrar_resumen() en el cliente.
+        await enviar_mensaje(writer, resultado)
+
     else:
         logger.warning(f"[farmacia_id={farmacia_id}] Acción desconocida: '{accion}'")
         await enviar_mensaje(writer, {
@@ -269,6 +263,7 @@ async def manejar_cliente(reader: asyncio.StreamReader, writer: asyncio.StreamWr
 
     conn = None             # conexión a la BD (la inicializamos más abajo)
     nombre_farmacia = None  # la necesitamos en el bloque finally para limpiar
+    farmacia_id = None  
 
     try:
         # Recibir el primer mensaje del cliente

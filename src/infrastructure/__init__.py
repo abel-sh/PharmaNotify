@@ -1,33 +1,39 @@
 """
-Módulo de acceso a datos.
-Expone las funciones de conexión y operaciones con MariaDB.
+Paquete de infraestructura de PharmaNotify.
 
 Estructura interna:
-  connection.py    → funciones de conexión a MariaDB (async y sync)
-  medicamentos.py  → CRUD de medicamentos
-  notificaciones.py → operaciones de notificaciones
-  farmacias.py     → operaciones sobre farmacias
+  clients/      → conexiones a servicios externos (MariaDB, Redis)
+  repositories/ → operaciones de datos por entidad del dominio
+
+Todo se re-exporta desde aquí para que el resto del sistema
+importe desde src.infrastructure sin conocer la estructura interna.
+Si en el futuro se reorganiza internamente, los imports externos no se rompen.
 """
 
-from src.infrastructure.connection import get_async_connection, get_sync_connection
-
-from src.infrastructure.medicamentos import (
+from src.infrastructure.clients import (
+    get_async_connection,
+    get_sync_connection,
+    get_redis_client,
+    get_async_redis_client,
+)
+from src.infrastructure.repositories import (
     crear_medicamento,
     listar_medicamentos,
     buscar_medicamento,
     actualizar_medicamento,
     eliminar_medicamento,
-)
-from src.infrastructure.notificaciones import (
     guardar_notificacion,
     guardar_notificacion_sync,
     ver_notificaciones,
+    configurar_umbral,
+    verificar_notificacion_reciente_sync
 )
-from src.infrastructure.farmacias import configurar_umbral
 
 __all__ = [
     "get_async_connection",
     "get_sync_connection",
+    "get_redis_client",
+    "get_async_redis_client",
     "crear_medicamento",
     "listar_medicamentos",
     "buscar_medicamento",
@@ -37,4 +43,5 @@ __all__ = [
     "guardar_notificacion_sync",
     "ver_notificaciones",
     "configurar_umbral",
+    "verificar_notificacion_reciente_sync"
 ]
