@@ -15,5 +15,10 @@ __pycache__/
 # Socket de IPC (se crea en tiempo de ejecución)
 *.sock
 
+# Celery Beat scheduler state
+celerybeat-schedule
+celerybeat-schedule.db
+celerybeat.pi
+
 # Otros archivos
 temp/
