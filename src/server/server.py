@@ -1,40 +1,118 @@
 import asyncio
 import argparse
-import logging
+import json
+import redis.asyncio as aioredis
 
 from src.shared import (
     SERVER_HOST, SERVER_PORT,
-    enviar_mensaje, recibir_mensaje
+    REDIS_HOST, REDIS_PORT, REDIS_DB, REDIS_NOTIFICATIONS_CHANNEL,
+    enviar_mensaje, recibir_mensaje,
+    obtener_logger
 )
 
-from src.db.database import (
+from src.infrastructure import (
     get_async_connection,
     crear_medicamento,
     listar_medicamentos,
     buscar_medicamento,
     actualizar_medicamento,
-    eliminar_medicamento
+    eliminar_medicamento,
+    ver_notificaciones,      
+    configurar_umbral,       
 )
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Logger de este módulo
-# __name__ toma el nombre del módulo automáticamente (src.server.server),
-# lo que permite identificar en los logs exactamente de dónde viene cada línea.
-# ─────────────────────────────────────────────────────────────────────────────
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-)
-logger = logging.getLogger(__name__)
+from src.workers.tasks import notificar_evento
 
+logger = obtener_logger("servidor")
 
-# ─────────────────────────────────────────────────────────────────────────────
 # Registro global de clientes actualmente conectados.
-# Clave:  nombre normalizado de la farmacia (ej: "farmacia del centro")
-# Valor:  el StreamWriter de esa conexión, para poder enviarle mensajes
-#         desde cualquier parte del servidor (ej: cuando llegue una notificación)
-# ─────────────────────────────────────────────────────────────────────────────
+# Para buscar por nombre al conectar
 clientes_conectados: dict[str, asyncio.StreamWriter] = {}
+
+# Se mantienen sincronizados: cuando se agrega/elimina en uno, se hace en el otro.
+# (para buscar por id al notificar)
+clientes_por_id: dict[int, asyncio.StreamWriter] = {}
+
+
+async def escuchar_notificaciones_redis():
+    """
+    Corrutina que se suscribe al canal Redis de notificaciones y reenvía
+    cada mensaje al cliente conectado correspondiente.
+
+    Corre permanentemente dentro del mismo event loop que el servidor TCP,
+    conviviendo con todas las conexiones de clientes sin bloquearlas.
+    Es la implementación del patrón Observer en el servidor:
+    Redis es el sujeto observable, y esta corrutina es el observador.
+    """
+    # Creamos un cliente Redis asíncrono para no bloquear el event loop.
+    cliente = aioredis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB)
+    pubsub  = cliente.pubsub()
+
+    # Nos suscribimos al canal. A partir de este momento, Redis nos enviará
+    # todos los mensajes que se publiquen en REDIS_NOTIFICATIONS_CHANNEL.
+    await pubsub.subscribe(REDIS_NOTIFICATIONS_CHANNEL)
+    logger.info(f"Suscrito al canal Redis: {REDIS_NOTIFICATIONS_CHANNEL}")
+
+    try:
+        # listen() es un generador asíncrono: cada vez que llega un mensaje
+        # al canal, yield lo entrega acá y el event loop puede atender
+        # otras tareas mientras esperamos el próximo mensaje.
+        async for mensaje_raw in pubsub.listen():
+
+            # El primer mensaje que llega después de subscribe() es una
+            # confirmación de suscripción con tipo "subscribe", no un mensaje real.
+            # Lo ignoramos.
+            if mensaje_raw["type"] != "message":
+                continue
+
+            try:
+                # El dato viene como bytes, lo decodificamos y parseamos.
+                payload = json.loads(mensaje_raw["data"].decode("utf-8"))
+                farmacia_id = payload.get("farmacia_id")
+                mensaje_texto = payload.get("mensaje", "")
+
+                # Buscamos en el diccionario global si esa farmacia está conectada.
+                # Para hacer la búsqueda necesitamos el nombre, no el id.
+                # Por eso buscamos el writer que corresponde a esa farmacia.
+                # clientes_conectados tiene como clave el nombre normalizado,
+                # así que necesitamos otra forma de encontrar al cliente por id.
+                # La solución es iterar sobre los conectados y buscar por farmacia_id.
+                # En el Issue #12 (IPC) refinaremos esta estructura si es necesario.
+                writer_destino = None
+                for nombre, writer in clientes_conectados.items():
+                    # Cada writer tiene asociado el farmacia_id en su transport.
+                    # Como no lo guardamos directamente, necesitamos un enfoque
+                    # alternativo: extendemos clientes_conectados para guardar
+                    # también el id. Ver nota abajo.
+                    pass
+
+                # NOTA: para poder buscar por farmacia_id necesitamos cambiar
+                # clientes_conectados para que guarde también el id.
+                # Lo ajustamos en manejar_cliente más abajo.
+                if farmacia_id in clientes_por_id:
+                    writer_destino = clientes_por_id[farmacia_id]
+                    await enviar_mensaje(writer_destino, {
+                        "tipo": "notificacion",
+                        "mensaje": mensaje_texto
+                    })
+                    logger.info(
+                        f"Notificación reenviada a farmacia_id={farmacia_id}"
+                    )
+                else:
+                    logger.info(
+                        f"Notificación para farmacia_id={farmacia_id} "
+                        f"generada pero la farmacia no está conectada. "
+                        f"Quedó persistida en la BD."
+                    )
+
+            except Exception as e:
+                logger.error(f"Error procesando notificación de Redis: {e}")
+
+    except asyncio.CancelledError:
+        # Se lanza cuando el servidor se está cerrando.
+        # Cancelamos la suscripción limpiamente.
+        await pubsub.unsubscribe(REDIS_NOTIFICATIONS_CHANNEL)
+        await cliente.aclose()
 
 
 async def obtener_resumen_estado(conn, farmacia_id: int) -> dict:
@@ -88,18 +166,15 @@ async def obtener_resumen_estado(conn, farmacia_id: int) -> dict:
 
 async def manejar_crud(conn, writer: asyncio.StreamWriter, farmacia_id: int, mensaje: dict) -> None:
     """
-    Recibe un mensaje del cliente, identifica la acción solicitada,
-    ejecuta la operación correspondiente en la BD, y responde al cliente.
-    
-    Es el "despachador central" del servidor: cada acción tiene su rama,
-    y todas terminan enviando un diccionario de respuesta al cliente.
+    Despachador central de operaciones CRUD.
+    Ahora, además de ejecutar la operación y responder al cliente,
+    despacha una tarea notificar_evento a Celery por cada operación exitosa.
     """
     accion = mensaje.get("accion", "")
 
     if accion == "crear_medicamento":
         resultado = await crear_medicamento(
-            conn,
-            farmacia_id,
+            conn, farmacia_id,
             mensaje.get("codigo", ""),
             mensaje.get("nombre", ""),
             mensaje.get("fecha_vencimiento", "")
@@ -107,35 +182,74 @@ async def manejar_crud(conn, writer: asyncio.StreamWriter, farmacia_id: int, men
         logger.info(f"[farmacia_id={farmacia_id}] crear_medicamento '{mensaje.get('codigo')}' → {resultado['ok']}")
         await enviar_mensaje(writer, {"tipo": "respuesta", **resultado})
 
+        # Despachamos la notificación solo si la operación fue exitosa.
+        # .delay() es no bloqueante: encola la tarea en Redis y continúa
+        # inmediatamente sin esperar a que el worker la procese.
+        if resultado["ok"]:
+            notificar_evento.delay(
+                farmacia_id=farmacia_id,
+                tipo="creacion",
+                mensaje=f"Medicamento '{mensaje.get('nombre')}' (código: {mensaje.get('codigo')}) agregado al inventario."
+            )
+
     elif accion == "listar_medicamentos":
         resultado = await listar_medicamentos(conn, farmacia_id)
         logger.info(f"[farmacia_id={farmacia_id}] listar_medicamentos → {len(resultado.get('medicamentos', []))} registros")
         await enviar_mensaje(writer, {"tipo": "respuesta", **resultado})
+        # Listar no genera notificación: es una consulta, no un evento de negocio.
 
     elif accion == "buscar_medicamento":
         resultado = await buscar_medicamento(conn, farmacia_id, mensaje.get("codigo", ""))
         logger.info(f"[farmacia_id={farmacia_id}] buscar_medicamento '{mensaje.get('codigo')}' → {resultado['ok']}")
         await enviar_mensaje(writer, {"tipo": "respuesta", **resultado})
+        # Buscar tampoco genera notificación por el mismo motivo.
 
     elif accion == "actualizar_medicamento":
         resultado = await actualizar_medicamento(
-            conn,
-            farmacia_id,
+            conn, farmacia_id,
             mensaje.get("codigo", ""),
-            mensaje.get("nombre"),           # puede ser None
-            mensaje.get("fecha_vencimiento") # puede ser None
+            mensaje.get("nombre"),
+            mensaje.get("fecha_vencimiento")
         )
         logger.info(f"[farmacia_id={farmacia_id}] actualizar_medicamento '{mensaje.get('codigo')}' → {resultado['ok']}")
         await enviar_mensaje(writer, {"tipo": "respuesta", **resultado})
 
+        if resultado["ok"]:
+            notificar_evento.delay(
+                farmacia_id=farmacia_id,
+                tipo="actualizacion",
+                mensaje=f"Medicamento '{mensaje.get('codigo')}' actualizado en el inventario."
+            )
+
     elif accion == "eliminar_medicamento":
         resultado = await eliminar_medicamento(conn, farmacia_id, mensaje.get("codigo", ""))
-        # Las eliminaciones se loguean con WARNING según el plan del proyecto
         logger.warning(f"[farmacia_id={farmacia_id}] eliminar_medicamento '{mensaje.get('codigo')}' → {resultado['ok']}")
         await enviar_mensaje(writer, {"tipo": "respuesta", **resultado})
 
+        if resultado["ok"]:
+            notificar_evento.delay(
+                farmacia_id=farmacia_id,
+                tipo="eliminacion",
+                mensaje=f"Medicamento '{mensaje.get('codigo')}' eliminado del inventario."
+            )
+
+    elif accion == "ver_notificaciones":
+        resultado = await ver_notificaciones(conn, farmacia_id)
+        logger.info(
+            f"[farmacia_id={farmacia_id}] ver_notificaciones "
+            f"→ {len(resultado.get('notificaciones', []))} registros"
+        )
+        await enviar_mensaje(writer, {"tipo": "respuesta", **resultado})
+
+    elif accion == "configurar_umbral":
+        resultado = await configurar_umbral(conn, farmacia_id, mensaje.get("umbral_dias", 7))
+        logger.info(
+            f"[farmacia_id={farmacia_id}] configurar_umbral → {resultado['ok']}"
+        )
+        await enviar_mensaje(writer, {"tipo": "respuesta", **resultado})
+
     else:
-        logger.warning(f"[farmacia_id={farmacia_id}] Acción desconocida recibida: '{accion}'")
+        logger.warning(f"[farmacia_id={farmacia_id}] Acción desconocida: '{accion}'")
         await enviar_mensaje(writer, {
             "tipo": "error",
             "mensaje": f"Acción '{accion}' no reconocida."
@@ -212,6 +326,7 @@ async def manejar_cliente(reader: asyncio.StreamReader, writer: asyncio.StreamWr
         # Guardamos el writer en el diccionario global para poder enviarle
         # notificaciones a esta farmacia desde cualquier otro punto del servidor.
         clientes_conectados[nombre_farmacia] = writer
+        clientes_por_id[farmacia_id] = writer
         logger.info(
             f"Farmacia '{farmacia_nombre}' conectada exitosamente. "
             f"Clientes activos: {len(clientes_conectados)}"
@@ -241,8 +356,12 @@ async def manejar_cliente(reader: asyncio.StreamReader, writer: asyncio.StreamWr
         # nunca quedará un cliente "fantasma" en el diccionario ni una conexión abierta.
         if nombre_farmacia and nombre_farmacia in clientes_conectados:
             del clientes_conectados[nombre_farmacia]
+        if farmacia_id and farmacia_id in clientes_por_id:
+            del clientes_por_id[farmacia_id]
+
+        if nombre_farmacia:
             logger.info(
-                f"Farmacia '{nombre_farmacia}' removida del registro. "
+                f"Farmacia '{nombre_farmacia}' desconectada y removida del registro. "
                 f"Clientes activos: {len(clientes_conectados)}"
             )
 
@@ -255,23 +374,26 @@ async def manejar_cliente(reader: asyncio.StreamReader, writer: asyncio.StreamWr
 
 async def iniciar_servidor(host: str, puerto: int):
     """
-    Crea el servidor TCP y lo deja escuchando indefinidamente.
-    asyncio.start_server registra manejar_cliente como el callback para
-    nuevas conexiones: cada vez que llega una, AsyncIO crea una tarea nueva
-    que ejecuta manejar_cliente() de forma independiente.
+    Lanza el servidor TCP y la corrutina de escucha Redis de forma concurrente.
+    Ambas corren en el mismo event loop de AsyncIO.
     """
-    servidor = await asyncio.start_server(
-        manejar_cliente,
-        host,
-        puerto
-    )
-
+    servidor = await asyncio.start_server(manejar_cliente, host, puerto)
     logger.info(f"Servidor PharmaNotify escuchando en {host}:{puerto}")
 
-    # "async with servidor" cierra limpiamente si el proceso recibe una señal de fin.
-    # serve_forever() mantiene el event loop corriendo indefinidamente.
+    # create_task lanza escuchar_notificaciones_redis como una tarea
+    # independiente dentro del event loop. No bloquea: el servidor TCP
+    # y la escucha Redis corren en paralelo cooperativo.
+    tarea_redis = asyncio.create_task(escuchar_notificaciones_redis())
+
     async with servidor:
         await servidor.serve_forever()
+
+    # Si el servidor se cierra, cancelamos también la tarea de Redis.
+    tarea_redis.cancel()
+    try:
+        await tarea_redis
+    except asyncio.CancelledError:
+        pass
 
 
 def parsear_argumentos():

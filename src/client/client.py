@@ -1,17 +1,17 @@
 import asyncio
 import argparse
-import logging
 
-from src.shared import SERVER_HOST, SERVER_PORT, enviar_mensaje, recibir_mensaje
+from src.shared import (
+    SERVER_HOST, SERVER_PORT,
+    enviar_mensaje, recibir_mensaje,
+    obtener_logger
+)
+
 from src.utils.exceptions import OperacionCancelada
 from src.utils.input_utils import input_async, input_requerido, input_entero_positivo, validar_fecha
 from src.client.ui import mostrar_menu, mostrar_resumen
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-)
-logger = logging.getLogger(__name__)
+logger = obtener_logger("cliente")
 
 
 async def escuchar_servidor(reader: asyncio.StreamReader, cola_respuestas: asyncio.Queue, esperando_respuesta: asyncio.Event) -> None:
@@ -57,6 +57,22 @@ async def escuchar_servidor(reader: asyncio.StreamReader, cola_respuestas: async
                     print(f"\n  Código:      {m['codigo']}")
                     print(f"  Nombre:      {m['nombre']}")
                     print(f"  Vencimiento: {m['fecha_vencimiento']}")
+                elif "notificaciones" in mensaje:
+                    notifs = mensaje["notificaciones"]
+                    if not notifs:
+                        print("\n  No hay notificaciones para mostrar.")
+                    else:
+                        print(f"\n  {'#':<5} {'TIPO':<15} {'MENSAJE':<45} {'LEÍDA':<6} {'FECHA'}")
+                        print("  " + "─" * 80)
+                        for n in notifs:
+                            leida = "Sí" if n["leida"] else "No"
+                            # Truncamos el mensaje a 45 caracteres para que la tabla
+                            # no se rompa visualmente si el mensaje es muy largo.
+                            mensaje_corto = n["mensaje"][:42] + "..." if len(n["mensaje"]) > 45 else n["mensaje"]
+                            print(
+                                f"  {n['id']:<5} {n['tipo']:<15} "
+                                f"{mensaje_corto:<45} {leida:<6} {n['creado_en']}"
+                            )
                 else:
                     simbolo = "✔" if mensaje.get("ok") else "✘"
                     print(f"\n  {simbolo} {mensaje.get('mensaje', '')}")
