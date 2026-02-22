@@ -17,10 +17,8 @@ logger = obtener_logger("cliente")
 async def escuchar_servidor(reader: asyncio.StreamReader, cola_respuestas: asyncio.Queue, esperando_respuesta: asyncio.Event) -> None:
     """
     Corrutina que corre en paralelo al loop del menú.
-    Su única responsabilidad es esperar mensajes del servidor
-    (notificaciones, respuestas a comandos) y mostrarlos en pantalla.
-    Cuando el servidor cierra la conexión, recibir_mensaje lanza
-    IncompleteReadError y esta corrutina termina limpiamente.
+    Recibe mensajes del servidor y los muestra en pantalla o los
+    deposita en la queue si loop_menu está esperando una respuesta puntual.
     """
     try:
         while True:
@@ -28,14 +26,10 @@ async def escuchar_servidor(reader: asyncio.StreamReader, cola_respuestas: async
             if mensaje is None:
                 break
 
-            # Si loop_menu está esperando una respuesta puntual (verificación previa),
-            # depositamos el mensaje en la queue para que lo consuma directamente.
-            # Después de depositar, continuamos al siguiente ciclo sin mostrar nada.
             if esperando_respuesta.is_set():
                 await cola_respuestas.put(mensaje)
                 continue
 
-            # Comportamiento normal: mostramos el mensaje en pantalla
             tipo = mensaje.get("tipo", "")
 
             if tipo == "notificacion":
@@ -66,8 +60,6 @@ async def escuchar_servidor(reader: asyncio.StreamReader, cola_respuestas: async
                         print("  " + "─" * 80)
                         for n in notifs:
                             leida = "Sí" if n["leida"] else "No"
-                            # Truncamos el mensaje a 45 caracteres para que la tabla
-                            # no se rompa visualmente si el mensaje es muy largo.
                             mensaje_corto = n["mensaje"][:42] + "..." if len(n["mensaje"]) > 45 else n["mensaje"]
                             print(
                                 f"  {n['id']:<5} {n['tipo']:<15} "
@@ -85,11 +77,18 @@ async def escuchar_servidor(reader: asyncio.StreamReader, cola_respuestas: async
             else:
                 logger.info(f"Mensaje del servidor: {mensaje}")
 
+    except asyncio.CancelledError:
+        # CancelledError se lanza cuando asyncio.wait cancela esta tarea
+        # porque loop_menu terminó (el usuario eligió salir).
+        # Es obligatorio relanzarla: si la absorbemos acá, asyncio pierde
+        # el rastro de que la tarea fue cancelada y el programa se cuelga.
+        raise
+
     except asyncio.IncompleteReadError:
         print("\nEl servidor cerró la conexión.")
+
     except Exception as e:
         logger.error(f"Error en la escucha del servidor: {e}")
-
 
 async def loop_menu(writer: asyncio.StreamWriter, nombre_farmacia: str, cola_respuestas: asyncio.Queue, esperando_respuesta: asyncio.Event) -> None:
     """
@@ -225,11 +224,23 @@ async def loop_menu(writer: asyncio.StreamWriter, nombre_farmacia: str, cola_res
                 })
 
             elif opcion == "8":
+                try:
+                    esperando_respuesta.set()
+                    await enviar_mensaje(writer, {"accion": "resumen_estado"})
+                    respuesta = await cola_respuestas.get()
+                finally:
+                    esperando_respuesta.clear()
+
+                # mostrar_resumen espera el mismo formato que envía el servidor
+                # al conectarse, así que reutilizamos la función sin cambios.
+                mostrar_resumen(respuesta)
+
+            elif opcion == "9":
                 print("Cerrando conexión. Hasta luego.")
                 break
 
             else:
-                print("  Opción no válida. Ingresá un número del 1 al 8.")
+                print("  Opción no válida. Ingresá un número del 1 al 9.")
 
         except OperacionCancelada:
             # La excepción ya mostró "Operación cancelada." en input_async.
