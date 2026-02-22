@@ -1,5 +1,4 @@
 from celery import Celery
-from celery.schedules import crontab
 from src.shared.config import (
     CELERY_BROKER_URL,
     CELERY_RESULT_BACKEND,
@@ -37,8 +36,8 @@ celery_app.conf.update(
 #   "schedule": cada cuánto tiempo ejecutarla (en segundos, o con crontab)
 #   "args":     argumentos que se le pasan a la tarea (vacío si no necesita)
 celery_app.conf.beat_schedule = {
-    "tarea-de-prueba-periodica": {
-        "task": "src.workers.tasks.tarea_de_prueba",
-        "schedule": VERIFICATION_INTERVAL_SECONDS,  # en segundos, leído del .env
+    "verificar-vencimientos-periodico": {
+        "task": "src.workers.tasks.verificar_vencimientos",
+        "schedule": VERIFICATION_INTERVAL_SECONDS,
     },
 }

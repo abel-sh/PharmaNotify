@@ -1,10 +1,13 @@
 import json
-import redis
 from src.workers.celery_app import celery_app
 from src.shared.logger import obtener_logger
-from src.shared.config import REDIS_HOST, REDIS_PORT, REDIS_DB, REDIS_NOTIFICATIONS_CHANNEL
-from src.infrastructure.connection import get_sync_connection
-from src.infrastructure.notificaciones import guardar_notificacion_sync
+from src.shared.config import REDIS_NOTIFICATIONS_CHANNEL
+from src.infrastructure import (
+    get_sync_connection,
+    get_redis_client,
+    guardar_notificacion_sync,
+    verificar_notificacion_reciente_sync,
+)
 
 logger = obtener_logger("worker")
 
@@ -48,7 +51,7 @@ def notificar_evento(self, farmacia_id: int, tipo: str, mensaje: str):
 
         # Publicación en Redis pub/sub.
         # Creamos una conexión Redis separada de la que usa Celery como broker.
-        cliente_redis = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB)
+        cliente_redis = get_redis_client()
 
         # El mensaje que publicamos es un JSON con toda la información
         # necesaria para que el servidor sepa a quién enviarle la notificación
@@ -77,6 +80,87 @@ def notificar_evento(self, farmacia_id: int, tipo: str, mensaje: str):
         # hasta un máximo de 3 intentos. Útil si Redis o la BD están
         # temporalmente no disponibles.
         raise self.retry(exc=e, countdown=5, max_retries=3)
+
+    finally:
+        if conn:
+            conn.close()
+            
+
+@celery_app.task(bind=True)
+def verificar_vencimientos(self):
+    """Detecta medicamentos próximos a vencer y genera alertas."""
+    conn = None
+    try:
+        conn = get_sync_connection()
+        cliente_redis = get_redis_client()
+
+        with conn.cursor() as cursor:
+            # JOIN con farmacias para usar el umbral_dias de cada una.
+            # Excluimos fecha_vencimiento < CURDATE() porque esos los manejaré luego
+            cursor.execute(
+                """
+                SELECT
+                    m.farmacia_id,
+                    m.codigo,
+                    m.nombre,
+                    m.fecha_vencimiento,
+                    f.umbral_dias,
+                    DATEDIFF(m.fecha_vencimiento, CURDATE()) AS dias_restantes
+                FROM medicamentos m
+                JOIN farmacias f ON f.id = m.farmacia_id
+                WHERE m.activo = TRUE
+                  AND f.activo = TRUE
+                  AND m.fecha_vencimiento <= DATE_ADD(CURDATE(), INTERVAL f.umbral_dias DAY)
+                  AND m.fecha_vencimiento >= CURDATE()
+                ORDER BY m.fecha_vencimiento ASC
+                """
+            )
+            medicamentos_proximos = cursor.fetchall()
+
+        logger.info(
+            f"[task_id={self.request.id}] "
+            f"verificar_vencimientos: {len(medicamentos_proximos)} medicamento(s) dentro del umbral."
+        )
+
+        for fila in medicamentos_proximos:
+            farmacia_id, codigo, nombre, fecha_venc, umbral_dias, dias_restantes = fila
+
+            # Anti-duplicados: máximo una alerta por medicamento por día.
+            if verificar_notificacion_reciente_sync(conn, farmacia_id, codigo):
+                logger.info(
+                    f"[task_id={self.request.id}] "
+                    f"Duplicado omitido: '{codigo}' farmacia_id={farmacia_id}."
+                )
+                continue
+
+            if dias_restantes == 0:
+                aviso_dias = "vence HOY"
+            elif dias_restantes == 1:
+                aviso_dias = "vence mañana"
+            else:
+                aviso_dias = f"vence en {dias_restantes} días"
+
+            mensaje = f"⚠ ALERTA: '{nombre}' (código: {codigo}) {aviso_dias} ({fecha_venc})."
+
+            guardar_notificacion_sync(conn, farmacia_id, "proximo_vencimiento", mensaje)
+
+            payload = json.dumps({
+                "farmacia_id": farmacia_id,
+                "tipo": "notificacion",
+                "mensaje": mensaje
+            }, ensure_ascii=False)
+            cliente_redis.publish(REDIS_NOTIFICATIONS_CHANNEL, payload)
+
+            # WARNING: situación que requiere atención humana, no un error del sistema.
+            logger.warning(
+                f"[task_id={self.request.id}] "
+                f"ALERTA: '{nombre}' (código: {codigo}) "
+                f"farmacia_id={farmacia_id}, dias_restantes={dias_restantes}."
+            )
+
+    except Exception as e:
+        logger.error(f"[task_id={self.request.id}] Error en verificar_vencimientos: {e}")
+        raise self.retry(exc=e, countdown=10, max_retries=3)
 
     finally:
         if conn:
