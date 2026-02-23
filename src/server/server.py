@@ -219,9 +219,11 @@ async def manejar_crud(conn, writer: asyncio.StreamWriter, farmacia_id: int, men
             )
 
     elif accion == "ver_notificaciones":
-        resultado = await ver_notificaciones(conn, farmacia_id)
+        solo_no_leidas = mensaje.get("solo_no_leidas", False)
+        resultado = await ver_notificaciones(conn, farmacia_id, solo_no_leidas)
         logger.info(
             f"[farmacia_id={farmacia_id}] ver_notificaciones "
+            f"(solo_no_leidas={solo_no_leidas}) "
             f"→ {len(resultado.get('notificaciones', []))} registros"
         )
         await enviar_mensaje(writer, {"tipo": "respuesta", **resultado})
