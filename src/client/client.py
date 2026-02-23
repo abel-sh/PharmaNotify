@@ -90,6 +90,7 @@ async def escuchar_servidor(reader: asyncio.StreamReader, cola_respuestas: async
     except Exception as e:
         logger.error(f"Error en la escucha del servidor: {e}")
 
+
 async def loop_menu(writer: asyncio.StreamWriter, nombre_farmacia: str, cola_respuestas: asyncio.Queue, esperando_respuesta: asyncio.Event) -> None:
     """
     Corrutina que gestiona el menú interactivo.
@@ -212,7 +213,12 @@ async def loop_menu(writer: asyncio.StreamWriter, nombre_farmacia: str, cola_res
                     print("  Operación cancelada.")
 
             elif opcion == "6":
-                await enviar_mensaje(writer, {"accion": "ver_notificaciones"})
+                filtrar = await input_async("  ¿Solo notificaciones no leídas? [s/N]: ")
+                solo_no_leidas = filtrar.strip().lower() == "s"
+                await enviar_mensaje(writer, {
+                    "accion": "ver_notificaciones",
+                    "solo_no_leidas": solo_no_leidas
+            })
 
             elif opcion == "7":
                 # Usamos input_entero_positivo porque un umbral de 0 o texto
