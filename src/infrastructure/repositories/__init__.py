@@ -17,6 +17,7 @@ from src.infrastructure.repositories.notificaciones import (
     guardar_notificacion_sync,
     ver_notificaciones,
     verificar_notificacion_reciente_sync,
+    limpiar_notificaciones_antiguas_sync
 )
 from src.infrastructure.repositories.farmacias import configurar_umbral
 
@@ -30,5 +31,6 @@ __all__ = [
     "guardar_notificacion_sync",
     "ver_notificaciones",
     "configurar_umbral",
-    "verificar_notificacion_reciente_sync"
+    "verificar_notificacion_reciente_sync",
+    "limpiar_notificaciones_antiguas_sync"
 ]

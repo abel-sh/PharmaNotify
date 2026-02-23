@@ -26,7 +26,8 @@ from src.infrastructure.repositories import (
     guardar_notificacion_sync,
     ver_notificaciones,
     configurar_umbral,
-    verificar_notificacion_reciente_sync
+    verificar_notificacion_reciente_sync,
+    limpiar_notificaciones_antiguas_sync
 )
 
 __all__ = [
@@ -43,5 +44,6 @@ __all__ = [
     "guardar_notificacion_sync",
     "ver_notificaciones",
     "configurar_umbral",
-    "verificar_notificacion_reciente_sync"
+    "verificar_notificacion_reciente_sync",
+    "limpiar_notificaciones_antiguas_sync"
 ]
