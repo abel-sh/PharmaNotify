@@ -1,4 +1,6 @@
 from celery import Celery
+from celery.schedules import crontab
+
 from src.shared.config import (
     CELERY_BROKER_URL,
     CELERY_RESULT_BACKEND,
@@ -39,5 +41,9 @@ celery_app.conf.beat_schedule = {
     "verificar-vencimientos-periodico": {
         "task": "src.workers.tasks.verificar_vencimientos",
         "schedule": VERIFICATION_INTERVAL_SECONDS,
+    },
+    "limpiar-notificaciones-diario": {
+        "task": "src.workers.tasks.limpiar_notificaciones_antiguas",
+        "schedule": crontab(hour=3, minute=0),
     },
 }

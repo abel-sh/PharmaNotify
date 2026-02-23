@@ -1,12 +1,13 @@
 import json
 from src.workers.celery_app import celery_app
 from src.shared.logger import obtener_logger
-from src.shared.config import REDIS_NOTIFICATIONS_CHANNEL
+from src.shared.config import REDIS_NOTIFICATIONS_CHANNEL, NOTIFICATION_RETENTION_DAYS
 from src.infrastructure import (
     get_sync_connection,
     get_redis_client,
     guardar_notificacion_sync,
     verificar_notificacion_reciente_sync,
+    limpiar_notificaciones_antiguas_sync
 )
 
 logger = obtener_logger("worker")
@@ -161,6 +162,44 @@ def verificar_vencimientos(self):
     except Exception as e:
         logger.error(f"[task_id={self.request.id}] Error en verificar_vencimientos: {e}")
         raise self.retry(exc=e, countdown=10, max_retries=3)
+
+    finally:
+        if conn:
+            conn.close()
+            
+
+@celery_app.task(bind=True)
+def limpiar_notificaciones_antiguas(self):
+    """
+    Tarea periódica que elimina físicamente notificaciones leídas
+    con más de NOTIFICATION_RETENTION_DAYS días de antigüedad.
+
+    Se ejecuta una vez por día a las 3 AM usando crontab, momento
+    de baja actividad para minimizar el impacto en la BD.
+
+    A diferencia del resto del sistema que usa eliminación lógica,
+    acá la eliminación es física porque las notificaciones viejas
+    y leídas ya no tienen valor histórico que preservar.
+    """
+    conn = None
+    try:
+        conn = get_sync_connection()
+        eliminadas = limpiar_notificaciones_antiguas_sync(conn, NOTIFICATION_RETENTION_DAYS)
+
+        # INFO porque es una operación de mantenimiento rutinaria,
+        # no una situación que requiera atención humana.
+        logger.info(
+            f"[task_id={self.request.id}] "
+            f"limpiar_notificaciones_antiguas: {eliminadas} notificación(es) "
+            f"eliminada(s) (retención: {NOTIFICATION_RETENTION_DAYS} días)."
+        )
+
+    except Exception as e:
+        logger.error(
+            f"[task_id={self.request.id}] "
+            f"Error en limpiar_notificaciones_antiguas: {e}"
+        )
+        raise self.retry(exc=e, countdown=60, max_retries=3)
 
     finally:
         if conn:
