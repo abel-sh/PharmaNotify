@@ -6,6 +6,7 @@ Módulo compartido con configuraciones y utilidades usadas por todos los compone
 from .config import (
     SERVER_HOST,
     SERVER_PORT,
+    MONITOR_SOCKET_PATH,
     DB_HOST,
     DB_PORT,
     DB_NAME,
@@ -29,6 +30,7 @@ from .protocol import (
 
 __all__ = [
     'SERVER_HOST', 'SERVER_PORT',
+    'MONITOR_SOCKET_PATH',
     'DB_HOST', 'DB_PORT', 'DB_NAME', 'DB_USER', 'DB_PASSWORD',
     'REDIS_HOST', 'REDIS_PORT', 'REDIS_DB', 'REDIS_NOTIFICATIONS_CHANNEL',
     'DEFAULT_ALERT_THRESHOLD_DAYS',
