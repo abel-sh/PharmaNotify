@@ -98,27 +98,69 @@ async def renombrar_farmacia(conn, nombre_actual: str, nombre_nuevo: str) -> dic
 async def desactivar_farmacia(conn, nombre: str) -> dict:
     """
     Desactiva lógicamente una farmacia (activo = FALSE).
-    No la elimina físicamente: mantiene el historial de medicamentos
-    y notificaciones intacto.
+    Distingue entre tres casos posibles: no existe, ya estaba inactiva,
+    o estaba activa y se desactiva ahora. Esto le da al administrador
+    feedback honesto en lugar del genérico "no encontrada".
+    """
+    nombre_norm = nombre.strip()
+
+    async with conn.cursor() as cursor:
+        # Buscamos sin filtrar por activo para poder distinguir los casos.
+        await cursor.execute(
+            "SELECT id, activo FROM farmacias WHERE LOWER(nombre) = LOWER(%s)",
+            (nombre_norm,)
+        )
+        farmacia = await cursor.fetchone()
+
+        if farmacia is None:
+            return {"ok": False, "mensaje": f"No existe ninguna farmacia con el nombre '{nombre_norm}'."}
+
+        farmacia_id, esta_activa = farmacia
+
+        # Si ya estaba inactiva, informamos sin hacer el UPDATE innecesario.
+        # El mismo patrón que usamos en configurar_umbral cuando el valor no cambia.
+        if not esta_activa:
+            return {"ok": False, "mensaje": f"La farmacia '{nombre_norm}' ya estaba desactivada."}
+
+        await cursor.execute(
+            "UPDATE farmacias SET activo = FALSE WHERE id = %s",
+            (farmacia_id,)
+        )
+
+    return {"ok": True, "farmacia_id": farmacia_id, "mensaje": f"Farmacia '{nombre_norm}' desactivada."}
+
+
+async def activar_farmacia(conn, nombre: str) -> dict:
+    """
+    Reactiva una farmacia que estaba desactivada (activo = TRUE).
+    Es el espejo exacto de desactivar_farmacia: misma lógica de
+    distinción de casos, dirección opuesta.
+    Si la farmacia no existe, ya estaba activa, o se reactiva ahora,
+    cada caso recibe su propio mensaje.
     """
     nombre_norm = nombre.strip()
 
     async with conn.cursor() as cursor:
         await cursor.execute(
-            "SELECT id FROM farmacias WHERE LOWER(nombre) = LOWER(%s) AND activo = TRUE",
+            "SELECT id, activo FROM farmacias WHERE LOWER(nombre) = LOWER(%s)",
             (nombre_norm,)
         )
         farmacia = await cursor.fetchone()
 
-        if not farmacia:
-            return {"ok": False, "mensaje": f"No se encontró una farmacia activa con el nombre '{nombre_norm}'."}
+        if farmacia is None:
+            return {"ok": False, "mensaje": f"No existe ninguna farmacia con el nombre '{nombre_norm}'."}
+
+        farmacia_id, esta_activa = farmacia
+
+        if esta_activa:
+            return {"ok": False, "mensaje": f"La farmacia '{nombre_norm}' ya estaba activa."}
 
         await cursor.execute(
-            "UPDATE farmacias SET activo = FALSE WHERE id = %s",
-            (farmacia[0],)
+            "UPDATE farmacias SET activo = TRUE WHERE id = %s",
+            (farmacia_id,)
         )
 
-    return {"ok": True, "farmacia_id": farmacia[0], "mensaje": f"Farmacia '{nombre_norm}' desactivada."}
+    return {"ok": True, "farmacia_id": farmacia_id, "mensaje": f"Farmacia '{nombre_norm}' reactivada exitosamente."}
 
 
 async def obtener_estadisticas(conn) -> dict:

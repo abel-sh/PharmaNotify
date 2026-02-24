@@ -26,6 +26,7 @@ from src.infrastructure.repositories.farmacias import (
     listar_farmacias,
     renombrar_farmacia,
     desactivar_farmacia,
+    activar_farmacia,
     obtener_estadisticas,
     configurar_umbral
 )
@@ -46,5 +47,6 @@ __all__ = [
     "listar_farmacias",
     "renombrar_farmacia",
     "desactivar_farmacia",
+    "activar_farmacia",
     "obtener_estadisticas"
 ]

@@ -26,6 +26,7 @@ from src.infrastructure import (
     listar_farmacias,
     renombrar_farmacia,
     desactivar_farmacia,
+    activar_farmacia,
     obtener_estadisticas       
 )
 
@@ -430,6 +431,14 @@ async def manejar_comando_monitor(conn, writer: asyncio.StreamWriter, comando: d
                 logger.warning(f"[monitor] Farmacia '{nombre}' desactivada y desconectada del servidor.")
 
         logger.warning(f"[monitor] desactivar_farmacia '{nombre}' → {resultado['ok']}")
+        await enviar_mensaje(writer, resultado)
+    
+    elif accion == "activar_farmacia":
+        nombre = comando.get("nombre", "")
+        resultado = await activar_farmacia(conn, nombre)
+        # INFO porque reactivar una farmacia es una operación de recuperación,
+        # no una acción destructiva que requiera nivel WARNING.
+        logger.info(f"[monitor] activar_farmacia '{nombre}' → {resultado['ok']}")
         await enviar_mensaje(writer, resultado)
 
     elif accion == "estadisticas":
