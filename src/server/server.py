@@ -1,10 +1,12 @@
 import asyncio
 import argparse
 import json
+import os
 
 from src.shared import (
     SERVER_HOST, SERVER_PORT,
     REDIS_NOTIFICATIONS_CHANNEL,
+    MONITOR_SOCKET_PATH,
     enviar_mensaje, recibir_mensaje,
     obtener_logger
 )
@@ -18,7 +20,13 @@ from src.infrastructure import (
     actualizar_medicamento,
     eliminar_medicamento,
     ver_notificaciones,      
-    configurar_umbral,       
+    configurar_umbral,
+    # Nuevas para el monitor
+    crear_farmacia,
+    listar_farmacias,
+    renombrar_farmacia,
+    desactivar_farmacia,
+    obtener_estadisticas       
 )
 
 from src.workers.tasks import notificar_evento
@@ -369,28 +377,195 @@ async def manejar_cliente(reader: asyncio.StreamReader, writer: asyncio.StreamWr
         await writer.wait_closed()
 
 
-async def iniciar_servidor(host: str, puerto: int):
+async def manejar_comando_monitor(conn, writer: asyncio.StreamWriter, comando: dict) -> None:
     """
-    Lanza el servidor TCP y la corrutina de escucha Redis de forma concurrente.
-    Ambas corren en el mismo event loop de AsyncIO.
+    Despachador de comandos administrativos enviados por el monitor vía IPC.
+
+    Es el análogo de manejar_crud() pero para el canal del monitor.
+    Separarlo en su propia función mantiene manejar_cliente() limpio
+    y hace que los dos canales (TCP de farmacias, UDS del monitor)
+    sean independientes y fáciles de razonar por separado.
+    """
+    accion = comando.get("accion", "")
+
+    if accion == "crear_farmacia":
+        resultado = await crear_farmacia(conn, comando.get("nombre", ""))
+        logger.info(f"[monitor] crear_farmacia '{comando.get('nombre')}' → {resultado['ok']}")
+        await enviar_mensaje(writer, resultado)
+
+    elif accion == "listar_farmacias":
+        resultado = await listar_farmacias(conn)
+        logger.info(f"[monitor] listar_farmacias → {len(resultado.get('farmacias', []))} registros")
+        await enviar_mensaje(writer, resultado)
+
+    elif accion == "renombrar_farmacia":
+        resultado = await renombrar_farmacia(
+            conn,
+            comando.get("nombre_actual", ""),
+            comando.get("nombre_nuevo", "")
+        )
+        logger.warning(f"[monitor] renombrar_farmacia '{comando.get('nombre_actual')}' → '{comando.get('nombre_nuevo')}': {resultado['ok']}")
+        await enviar_mensaje(writer, resultado)
+
+    elif accion == "desactivar_farmacia":
+        nombre = comando.get("nombre", "")
+        resultado = await desactivar_farmacia(conn, nombre)
+
+        # Si la farmacia estaba conectada en este momento, hay que avisarle
+        # y cerrar su conexión. Buscamos por nombre normalizado.
+        if resultado["ok"]:
+            nombre_norm = nombre.strip().lower()
+            if nombre_norm in clientes_conectados:
+                writer_farmacia = clientes_conectados[nombre_norm]
+                try:
+                    await enviar_mensaje(writer_farmacia, {
+                        "tipo": "error",
+                        "mensaje": "Tu farmacia fue desactivada por el administrador. Conexión cerrada."
+                    })
+                    writer_farmacia.close()
+                    await writer_farmacia.wait_closed()
+                except Exception:
+                    pass  # Si ya estaba desconectada, ignoramos el error
+                # La limpieza del diccionario la hace el finally de manejar_cliente
+                logger.warning(f"[monitor] Farmacia '{nombre}' desactivada y desconectada del servidor.")
+
+        logger.warning(f"[monitor] desactivar_farmacia '{nombre}' → {resultado['ok']}")
+        await enviar_mensaje(writer, resultado)
+
+    elif accion == "estadisticas":
+        resultado = await obtener_estadisticas(conn)
+        logger.info("[monitor] estadisticas solicitadas")
+        await enviar_mensaje(writer, resultado)
+
+    elif accion == "status":
+        # El status usa datos en memoria (clientes_conectados) más datos de BD.
+        # No necesita una función de repositorio porque parte de la info
+        # solo existe en el proceso del servidor, no en la BD.
+        resultado = {
+            "ok": True,
+            "farmacias_conectadas": list(clientes_conectados.keys()),
+            "total_conectadas": len(clientes_conectados)
+        }
+        logger.info("[monitor] status solicitado")
+        await enviar_mensaje(writer, resultado)
+
+    elif accion == "run_tarea":
+        # El monitor puede forzar la ejecución inmediata de tareas de Celery.
+        # Importamos acá para evitar imports circulares al inicio del módulo.
+        from src.workers.tasks import verificar_vencimientos, limpiar_notificaciones_antiguas
+        tarea = comando.get("tarea", "")
+
+        if tarea == "verificar_vencimientos":
+            verificar_vencimientos.delay()
+            resultado = {"ok": True, "mensaje": "Tarea 'verificar_vencimientos' encolada."}
+        elif tarea == "limpiar_notificaciones":
+            limpiar_notificaciones_antiguas.delay()
+            resultado = {"ok": True, "mensaje": "Tarea 'limpiar_notificaciones_antiguas' encolada."}
+        else:
+            resultado = {"ok": False, "mensaje": f"Tarea '{tarea}' no reconocida."}
+
+        logger.info(f"[monitor] run_tarea '{tarea}' → {resultado['ok']}")
+        await enviar_mensaje(writer, resultado)
+
+    else:
+        logger.warning(f"[monitor] Acción desconocida: '{accion}'")
+        await enviar_mensaje(writer, {
+            "ok": False,
+            "mensaje": f"Acción '{accion}' no reconocida."
+        })
+
+
+async def manejar_conexion_monitor(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+    """
+    Corrutina que maneja UNA conexión del monitor por el Unix Domain Socket.
+
+    A diferencia de manejar_cliente(), el monitor envía un comando,
+    recibe la respuesta, y cierra la conexión. Es un patrón request-response
+    puro, sin loop de mensajes. Esto simplifica el protocolo de IPC:
+    cada invocación del monitor abre, opera, y cierra.
+    """
+    conn = None
+    try:
+        conn  = await get_async_connection()
+        comando = await recibir_mensaje(reader)
+
+        if comando is None:
+            logger.warning("[monitor] Conexión IPC recibida pero sin mensaje.")
+            return
+
+        logger.info(f"[monitor] Comando recibido: {comando.get('accion', 'desconocido')}")
+        await manejar_comando_monitor(conn, writer, comando)
+
+    except asyncio.IncompleteReadError:
+        logger.info("[monitor] Conexión IPC cerrada abruptamente.")
+
+    except Exception as e:
+        logger.error(f"[monitor] Error inesperado: {e}")
+        try:
+            await enviar_mensaje(writer, {"ok": False, "mensaje": f"Error interno del servidor: {e}"})
+        except Exception:
+            pass
+
+    finally:
+        if conn:
+            conn.close()
+        writer.close()
+        await writer.wait_closed()
+
+
+async def escuchar_monitor_ipc(socket_path: str):
+    """
+    Lanza el servidor Unix Domain Socket que escucha comandos del monitor.
+
+    Corre como una tarea independiente en el mismo event loop que el
+    servidor TCP y la escucha de Redis. Los tres conviven sin bloquearse.
+
+    Si el archivo del socket quedó de una ejecución anterior (por ejemplo,
+    si el servidor crasheó), lo eliminamos antes de crear el nuevo para
+    evitar el error 'Address already in use'.
+    """
+    # Limpieza preventiva: si existe el archivo del socket de una sesión anterior,
+    # lo eliminamos. Un socket viejo no sirve para nada y bloquearía el arranque.
+    if os.path.exists(socket_path):
+        os.remove(socket_path)
+        logger.info(f"Socket IPC anterior eliminado: {socket_path}")
+
+    servidor_ipc = await asyncio.start_unix_server(
+        manejar_conexion_monitor,
+        path=socket_path
+    )
+    logger.info(f"Monitor IPC escuchando en: {socket_path}")
+
+    async with servidor_ipc:
+        await servidor_ipc.serve_forever()
+
+
+async def iniciar_servidor(host: str, puerto: int, socket_path: str):
+    """
+    Lanza el servidor TCP, el listener IPC del monitor, y la escucha
+    de Redis como tareas concurrentes dentro del mismo event loop.
+
+    Tres corrutinas corriendo en paralelo cooperativo:
+      1. servidor TCP  → atiende farmacias
+      2. servidor IPC  → atiende al monitor administrador
+      3. escucha Redis → reenvía notificaciones a clientes conectados
     """
     servidor = await asyncio.start_server(manejar_cliente, host, puerto)
     logger.info(f"Servidor PharmaNotify escuchando en {host}:{puerto}")
 
-    # create_task lanza escuchar_notificaciones_redis como una tarea
-    # independiente dentro del event loop. No bloquea: el servidor TCP
-    # y la escucha Redis corren en paralelo cooperativo.
-    tarea_redis = asyncio.create_task(escuchar_notificaciones_redis())
+    tarea_redis  = asyncio.create_task(escuchar_notificaciones_redis())
+    tarea_ipc    = asyncio.create_task(escuchar_monitor_ipc(socket_path))
 
     async with servidor:
         await servidor.serve_forever()
 
-    # Si el servidor se cierra, cancelamos también la tarea de Redis.
     tarea_redis.cancel()
-    try:
-        await tarea_redis
-    except asyncio.CancelledError:
-        pass
+    tarea_ipc.cancel()
+    for tarea in (tarea_redis, tarea_ipc):
+        try:
+            await tarea
+        except asyncio.CancelledError:
+            pass
 
 
 def parsear_argumentos():
@@ -408,10 +583,14 @@ def parsear_argumentos():
         default=SERVER_PORT,
         help=f"Puerto donde escuchar conexiones (default: {SERVER_PORT})"
     )
-    # Nota: luego se agregará --socket para el Unix Domain Socket del monitor
+    parser.add_argument(
+        "--socket",
+        default=MONITOR_SOCKET_PATH,
+        help=f"Ruta del Unix Domain Socket para el monitor (default: {MONITOR_SOCKET_PATH})"
+    )
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parsear_argumentos()
-    asyncio.run(iniciar_servidor(args.host, args.puerto))
+    asyncio.run(iniciar_servidor(args.host, args.puerto, args.socket))
