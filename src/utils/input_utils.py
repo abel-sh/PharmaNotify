@@ -1,7 +1,7 @@
 """
 Utilidades para recolección y validación de input del usuario.
 
-Separadas del cliente para que el monitor (Issue 13) pueda reutilizarlas
+Separadas del cliente para que el monitor pueda reutilizarlas
 sin depender del paquete client. Ambos componentes tienen menús interactivos
 con las mismas necesidades de validación.
 """
