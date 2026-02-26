@@ -1,3 +1,19 @@
+"""
+Servidor principal de PharmaNotify.
+
+Orquesta tres corrutinas concurrentes dentro del mismo event loop:
+  1. Servidor TCP — acepta conexiones de farmacias y despacha
+     operaciones CRUD delegando a los repositorios.
+  2. Servidor IPC (Unix Domain Socket) — acepta comandos del
+     monitor administrativo.
+  3. Suscriptor Redis pub/sub — recibe notificaciones generadas
+     por los workers de Celery y las reenvía a los clientes conectados.
+
+El servidor actúa como coordinador: no contiene lógica de negocio
+ni acceso directo a la BD. Toda operación de datos la delega a la
+capa de repositorios en infrastructure/repositories/.
+"""
+
 import asyncio
 import argparse
 import json
@@ -19,15 +35,17 @@ from src.infrastructure import (
     buscar_medicamento,
     actualizar_medicamento,
     eliminar_medicamento,
-    ver_notificaciones,      
+    ver_notificaciones,
+    buscar_farmacia_por_nombre,      
     configurar_umbral,
+    obtener_resumen_farmacia,
     # Nuevas para el monitor
     crear_farmacia,
     listar_farmacias,
     renombrar_farmacia,
-    desactivar_farmacia,
     activar_farmacia,
-    obtener_estadisticas       
+    desactivar_farmacia,
+    obtener_estadisticas,
 )
 
 from src.workers.tasks import notificar_evento
@@ -107,55 +125,6 @@ async def escuchar_notificaciones_redis():
         # Cancelamos la suscripción limpiamente.
         await pubsub.unsubscribe(REDIS_NOTIFICATIONS_CHANNEL)
         await cliente.aclose()
-
-
-async def obtener_resumen_estado(conn, farmacia_id: int) -> dict:
-    """
-    Consulta la BD y construye un resumen del estado actual de la farmacia.
-    Se envía automáticamente al cliente justo después de que se valida su conexión.
-    """
-    async with conn.cursor() as cursor:
-
-        await cursor.execute(
-            "SELECT COUNT(*) FROM medicamentos WHERE farmacia_id = %s AND activo = TRUE",
-            (farmacia_id,)
-        )
-        (total_activos,) = await cursor.fetchone()
-
-        await cursor.execute(
-            "SELECT COUNT(*) FROM notificaciones WHERE farmacia_id = %s AND leida = FALSE",
-            (farmacia_id,)
-        )
-        (notificaciones_no_leidas,) = await cursor.fetchone()
-
-        # Ahora el filtro es preciso: solo medicamentos desactivados
-        # automáticamente por Celery cuando su fecha de vencimiento pasó.
-        # Los eliminados manualmente por el usuario tienen motivo_baja = 'eliminado_manual'
-        # y no tienen nada que hacer en esta sección del resumen.
-        await cursor.execute(
-            """
-            SELECT nombre, fecha_vencimiento
-            FROM medicamentos
-            WHERE farmacia_id = %s 
-              AND activo = FALSE 
-              AND motivo_baja = 'vencido_automatico'
-            ORDER BY fecha_vencimiento DESC
-            LIMIT 10
-            """,
-            (farmacia_id,)
-        )
-        filas_vencidos = await cursor.fetchall()
-        vencidos_lista = [
-            {"nombre": fila[0], "fecha_vencimiento": str(fila[1])}
-            for fila in filas_vencidos
-        ]
-
-    return {
-        "tipo": "resumen_estado",
-        "medicamentos_activos": total_activos,
-        "notificaciones_no_leidas": notificaciones_no_leidas,
-        "vencidos_mientras_ausente": vencidos_lista
-    }
 
 
 async def manejar_crud(conn, writer: asyncio.StreamWriter, farmacia_id: int, mensaje: dict) -> None:
@@ -245,11 +214,11 @@ async def manejar_crud(conn, writer: asyncio.StreamWriter, farmacia_id: int, men
         await enviar_mensaje(writer, {"tipo": "respuesta", **resultado})
 
     elif accion == "resumen_estado":
-        resultado = await obtener_resumen_estado(conn, farmacia_id)
+        resultado = await obtener_resumen_farmacia(conn, farmacia_id)
         logger.info(
             f"[farmacia_id={farmacia_id}] resumen_estado solicitado manualmente"
         )
-        # obtener_resumen_estado ya devuelve el tipo "resumen_estado",
+        # obtener_resumen_farmacia ya devuelve el tipo "resumen_estado",
         # que es exactamente el formato que espera mostrar_resumen() en el cliente.
         await enviar_mensaje(writer, resultado)
 
@@ -283,7 +252,7 @@ async def manejar_cliente(reader: asyncio.StreamReader, writer: asyncio.StreamWr
         nombre_farmacia_raw = mensaje_inicial.get("nombre_farmacia", "")
 
         # Normalizar el nombre 
-        nombre_farmacia = nombre_farmacia_raw.strip().lower()
+        nombre_farmacia = nombre_farmacia_raw.strip()
 
         if not nombre_farmacia:
             await enviar_mensaje(writer, {
@@ -294,17 +263,10 @@ async def manejar_cliente(reader: asyncio.StreamReader, writer: asyncio.StreamWr
 
         # Buscar la farmacia en la BD
         conn = await get_async_connection()
-        async with conn.cursor() as cursor:
-            # LOWER() en SQL hace lo mismo que .lower() en Python,
-            # así la comparación no depende de mayúsculas en la BD.
-            await cursor.execute(
-                "SELECT id, nombre, activo FROM farmacias WHERE LOWER(nombre) = %s",
-                (nombre_farmacia,)
-            )
-            farmacia = await cursor.fetchone()
+        resultado = await buscar_farmacia_por_nombre(conn, nombre_farmacia)
 
-        # Validar existencia y estado activo
-        if farmacia is None:
+        # Validar existencia
+        if not resultado["encontrada"]:
             logger.warning(
                 f"Intento de conexión con farmacia no registrada: "
                 f"'{nombre_farmacia_raw}' desde {direccion}"
@@ -315,7 +277,9 @@ async def manejar_cliente(reader: asyncio.StreamReader, writer: asyncio.StreamWr
             })
             return
 
-        farmacia_id, farmacia_nombre, farmacia_activa = farmacia
+        farmacia_id = resultado["farmacia_id"]
+        farmacia_nombre = resultado["nombre"]
+        farmacia_activa = resultado["activa"]
 
         if not farmacia_activa:
             logger.warning(
@@ -331,14 +295,14 @@ async def manejar_cliente(reader: asyncio.StreamReader, writer: asyncio.StreamWr
         # Registrar y dar la bienvenida
         # Guardamos el writer en el diccionario global para poder enviarle
         # notificaciones a esta farmacia desde cualquier otro punto del servidor.
-        clientes_conectados[nombre_farmacia] = writer
+        clientes_conectados[nombre_farmacia.lower()] = writer
         clientes_por_id[farmacia_id] = writer
         logger.info(
             f"Farmacia '{farmacia_nombre}' conectada exitosamente. "
             f"Clientes activos: {len(clientes_conectados)}"
         )
 
-        resumen = await obtener_resumen_estado(conn, farmacia_id)
+        resumen = await obtener_resumen_farmacia(conn, farmacia_id)
         await enviar_mensaje(writer, resumen)
 
         # Loop de escucha
@@ -360,8 +324,8 @@ async def manejar_cliente(reader: asyncio.StreamReader, writer: asyncio.StreamWr
         # El bloque finally se ejecuta SIEMPRE: haya error, return, o cierre normal.
         # Es el lugar correcto para limpiar recursos, porque garantiza que
         # nunca quedará un cliente "fantasma" en el diccionario ni una conexión abierta.
-        if nombre_farmacia and nombre_farmacia in clientes_conectados:
-            del clientes_conectados[nombre_farmacia]
+        if nombre_farmacia and nombre_farmacia.lower() in clientes_conectados:
+            del clientes_conectados[nombre_farmacia.lower()]
         if farmacia_id and farmacia_id in clientes_por_id:
             del clientes_por_id[farmacia_id]
 
@@ -578,6 +542,10 @@ async def iniciar_servidor(host: str, puerto: int, socket_path: str):
 
 
 def parsear_argumentos():
+    """
+    Procesa los argumentos de línea de comandos del servidor:
+    --host, --puerto, y --socket para el Unix Domain Socket del monitor.
+    """
     parser = argparse.ArgumentParser(
         description="PharmaNotify — Servidor TCP de notificaciones de medicamentos"
     )

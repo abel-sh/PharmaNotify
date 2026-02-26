@@ -1,3 +1,16 @@
+"""
+Protocolo de comunicación TCP con prefijo de longitud.
+
+Define las funciones enviar_mensaje() y recibir_mensaje() que usan
+tanto el cliente como el servidor para intercambiar diccionarios Python
+por TCP. Cada mensaje se serializa como JSON y se antepone un prefijo
+de 4 bytes (big-endian) con la longitud del payload.
+
+Este módulo es la única dependencia compartida entre cliente y servidor
+en cuanto a comunicación. Si el protocolo cambia, se cambia acá y
+ambos extremos se adaptan automáticamente.
+"""
+
 import json
 import struct
 

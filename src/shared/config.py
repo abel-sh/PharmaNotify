@@ -1,3 +1,15 @@
+"""
+Configuración centralizada del sistema PharmaNotify.
+
+Carga las variables de entorno desde el archivo .env y expone
+constantes con valores por defecto para todos los componentes:
+servidor TCP, MariaDB, Redis, Celery, y notificaciones.
+
+Cualquier componente que necesite un valor configurable lo importa
+desde acá, garantizando que exista una única fuente de verdad.
+"""
+
+
 import os
 from dotenv import load_dotenv
 
@@ -42,4 +54,4 @@ VERIFICATION_INTERVAL_SECONDS = int(os.getenv("VERIFICATION_INTERVAL_SECONDS", 6
 # Notificaciones
 # =============================================================================
 DEFAULT_ALERT_THRESHOLD_DAYS = int(os.getenv("DEFAULT_ALERT_THRESHOLD_DAYS", 7)) # Umbral por defecto de días de anticipación para generar alertas de vencimiento
-NOTIFICATION_RETENTION_DAYS = int(os.getenv("NOTIFICATION_RETENTION_DAYS", 30))
+NOTIFICATION_RETENTION_DAYS = int(os.getenv("NOTIFICATION_RETENTION_DAYS", 30)) 

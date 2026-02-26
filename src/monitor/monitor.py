@@ -1,3 +1,16 @@
+"""
+Monitor administrativo de PharmaNotify.
+
+Proceso CLI independiente que se comunica con el servidor a través
+de un Unix Domain Socket (IPC). Permite gestionar farmacias (alta,
+baja, renombrado, activación), consultar estadísticas del sistema,
+y forzar la ejecución de tareas de Celery.
+
+A diferencia del cliente, el monitor usa un patrón request-response
+puro: abre una conexión por cada comando, envía, recibe, y cierra.
+No mantiene una conexión persistente con el servidor.
+"""
+
 import asyncio
 import argparse
 
@@ -6,9 +19,10 @@ from src.shared import (
     enviar_mensaje, recibir_mensaje,
     obtener_logger
 )
+
 from src.utils.exceptions import OperacionCancelada
 from src.utils.input_utils import input_async, input_requerido
-from src.monitor.ui import mostrar_menu, mostrar_respuesta   # ← viene de ui.py
+from src.monitor.ui import mostrar_menu, mostrar_respuesta
 
 logger = obtener_logger("monitor")
 
@@ -45,6 +59,13 @@ async def enviar_comando(socket_path: str, comando: dict) -> dict:
 
 
 async def loop_monitor(socket_path: str) -> None:
+    """
+    Loop principal del monitor administrativo.
+    Muestra el menú, captura la opción del usuario, y envía
+    el comando correspondiente al servidor por IPC.
+    Cada iteración del loop es un comando completo:
+    mostrar menú → leer opción → enviar → mostrar respuesta.
+    """
     while True:
         mostrar_menu()
 
@@ -161,6 +182,10 @@ async def loop_monitor(socket_path: str) -> None:
 
 
 def parsear_argumentos():
+    """
+    Procesa los argumentos de línea de comandos del monitor:
+    --socket con la ruta del Unix Domain Socket del servidor.
+    """
     parser = argparse.ArgumentParser(
         description="PharmaNotify — Monitor de administración del sistema"
     )

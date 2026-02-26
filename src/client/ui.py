@@ -26,6 +26,9 @@ def mostrar_resumen(resumen: dict) -> None:
 
 
 def mostrar_menu() -> None:
+    """
+    Imprime el menú interactivo del cliente con las opciones disponibles.
+    """
     print("\n+--------------------------------------+")
     print("|           PHARMA NOTIFY              |")
     print("+--------------------------------------+")

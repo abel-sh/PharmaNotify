@@ -15,9 +15,13 @@ from src.infrastructure.repositories.medicamentos import (
 
 from src.infrastructure.repositories.notificaciones import (
     guardar_notificacion,
-    guardar_notificacion_sync,
     ver_notificaciones,
+)
+
+from src.infrastructure.repositories.notificaciones_sync import (
+    guardar_notificacion_sync,
     verificar_notificacion_reciente_sync,
+    obtener_medicamentos_proximos_sync,
     limpiar_notificaciones_antiguas_sync
 )
 
@@ -25,10 +29,12 @@ from src.infrastructure.repositories.farmacias import (
     crear_farmacia,
     listar_farmacias,
     renombrar_farmacia,
-    desactivar_farmacia,
+    buscar_farmacia_por_nombre,
     activar_farmacia,
+    desactivar_farmacia,
+    configurar_umbral,
     obtener_estadisticas,
-    configurar_umbral
+    obtener_resumen_farmacia
 )
 
 __all__ = [
@@ -41,12 +47,15 @@ __all__ = [
     "guardar_notificacion_sync",
     "ver_notificaciones",
     "verificar_notificacion_reciente_sync",
+    "obtener_medicamentos_proximos_sync",
     "limpiar_notificaciones_antiguas_sync",
-    "configurar_umbral",
     "crear_farmacia",
     "listar_farmacias",
     "renombrar_farmacia",
-    "desactivar_farmacia",
+    "buscar_farmacia_por_nombre",
     "activar_farmacia",
-    "obtener_estadisticas"
+    "desactivar_farmacia",
+    "configurar_umbral",
+    "obtener_estadisticas",
+    "obtener_resumen_farmacia"
 ]

@@ -1,3 +1,16 @@
+"""
+Cliente CLI de PharmaNotify.
+
+Se conecta al servidor por TCP y permite a una farmacia gestionar
+su inventario de medicamentos a través de un menú interactivo.
+Internamente corre dos corrutinas en paralelo:
+  - loop_menu(): captura la entrada del usuario y envía comandos.
+  - escuchar_servidor(): recibe respuestas y notificaciones en tiempo real.
+
+La separación en dos corrutinas permite que las notificaciones de fondo
+(vencimientos, eventos CRUD) lleguen sin bloquear la interacción del usuario.
+"""
+
 import asyncio
 import argparse
 
@@ -314,6 +327,10 @@ async def iniciar_cliente(host: str, puerto: int, nombre_farmacia: str) -> None:
 
 
 def parsear_argumentos():
+    """
+    Procesa los argumentos de línea de comandos del cliente:
+    --host, --puerto del servidor, y --farmacia con el nombre de la farmacia.
+    """
     parser = argparse.ArgumentParser(
         description="PharmaNotify — Cliente CLI de farmacia"
     )

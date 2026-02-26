@@ -1,3 +1,14 @@
+"""
+Clientes de conexión a MariaDB.
+
+Provee dos funciones de conexión según el modelo de ejecución:
+  - get_async_connection(): para el servidor AsyncIO (usa aiomysql)
+  - get_sync_connection(): para los workers de Celery (usa PyMySQL)
+
+Centralizar la creación de conexiones aquí significa que si la BD
+cambia de host, credenciales, o motor, el cambio ocurre en un único lugar.
+"""
+
 import aiomysql
 import pymysql
 from src.shared.config import DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD
