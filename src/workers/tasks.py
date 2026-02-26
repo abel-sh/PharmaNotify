@@ -1,3 +1,16 @@
+"""
+Tareas distribuidas de Celery para PharmaNotify.
+
+Contiene las tareas que corren en procesos worker separados del servidor:
+  - notificar_evento: persiste y publica notificaciones de eventos CRUD.
+  - verificar_vencimientos: detecta medicamentos próximos a vencer y genera alertas.
+  - limpiar_notificaciones_antiguas: elimina notificaciones leídas con antigüedad
+    superior al período de retención configurado.
+
+Todas las tareas usan conexiones sincrónicas a MariaDB y Redis porque
+los workers de Celery no tienen event loop de AsyncIO.
+"""
+
 import json
 from src.workers.celery_app import celery_app
 from src.shared.logger import obtener_logger
@@ -7,22 +20,11 @@ from src.infrastructure import (
     get_redis_client,
     guardar_notificacion_sync,
     verificar_notificacion_reciente_sync,
+    obtener_medicamentos_proximos_sync,
     limpiar_notificaciones_antiguas_sync
 )
 
 logger = obtener_logger("worker")
-
-
-@celery_app.task(bind=True)
-def tarea_de_prueba(self):
-    """
-    Tarea de verificación del sistema. Se reemplazará en el Issue #9.
-    """
-    logger.info(
-        f"[task_id={self.request.id}] "
-        f"Tarea de prueba ejecutada correctamente."
-    )
-    return "ok"
 
 
 @celery_app.task(bind=True)
@@ -95,28 +97,7 @@ def verificar_vencimientos(self):
         conn = get_sync_connection()
         cliente_redis = get_redis_client()
 
-        with conn.cursor() as cursor:
-            # JOIN con farmacias para usar el umbral_dias de cada una.
-            # Excluimos fecha_vencimiento < CURDATE() porque esos los manejaré luego
-            cursor.execute(
-                """
-                SELECT
-                    m.farmacia_id,
-                    m.codigo,
-                    m.nombre,
-                    m.fecha_vencimiento,
-                    f.umbral_dias,
-                    DATEDIFF(m.fecha_vencimiento, CURDATE()) AS dias_restantes
-                FROM medicamentos m
-                JOIN farmacias f ON f.id = m.farmacia_id
-                WHERE m.activo = TRUE
-                  AND f.activo = TRUE
-                  AND m.fecha_vencimiento <= DATE_ADD(CURDATE(), INTERVAL f.umbral_dias DAY)
-                  AND m.fecha_vencimiento >= CURDATE()
-                ORDER BY m.fecha_vencimiento ASC
-                """
-            )
-            medicamentos_proximos = cursor.fetchall()
+        medicamentos_proximos = obtener_medicamentos_proximos_sync(conn)
 
         logger.info(
             f"[task_id={self.request.id}] "
@@ -166,7 +147,7 @@ def verificar_vencimientos(self):
     finally:
         if conn:
             conn.close()
-            
+                    
 
 @celery_app.task(bind=True)
 def limpiar_notificaciones_antiguas(self):

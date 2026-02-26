@@ -1,5 +1,3 @@
-# src/monitor/ui.py
-
 """
 Funciones de presentación visual del monitor administrativo.
 
@@ -10,6 +8,9 @@ y viceversa.
 
 
 def mostrar_menu() -> None:
+    """
+    Imprime el menú interactivo del monitor con las opciones de administración.
+    """
     print("\n+------------------------------------------+")
     print("|       PHARMA NOTIFY — MONITOR ADMIN      |")
     print("+------------------------------------------+")

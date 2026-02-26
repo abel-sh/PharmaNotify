@@ -1,3 +1,12 @@
+"""
+Repositorio de operaciones sobre la tabla 'medicamentos'.
+
+Todas las funciones son async porque las consume exclusivamente
+el servidor AsyncIO. Encapsula las operaciones CRUD completas:
+crear, listar, buscar, actualizar y eliminar (eliminación lógica
+con campo motivo_baja para distinguir bajas manuales de automáticas).
+"""
+
 async def crear_medicamento(conn, farmacia_id: int, codigo: str, nombre: str, fecha_vencimiento: str) -> dict:
     """
     Inserta un nuevo medicamento para la farmacia dada.

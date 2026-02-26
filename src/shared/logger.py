@@ -1,4 +1,12 @@
-# Configuración centralizada del logging para todos los componentes del sistema.
+"""
+Configuración centralizada del logging para todos los componentes del sistema.
+
+Provee obtener_logger(), la función que usan todos los componentes
+para crear loggers con el formato estandarizado del sistema.
+El formato incluye timestamp, nivel (INFO/WARNING/ERROR), nombre
+del componente, y el mensaje. Todos los loggers escriben a stdout.
+"""
+
 import logging
 import sys
 

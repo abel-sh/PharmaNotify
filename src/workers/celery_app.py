@@ -1,3 +1,12 @@
+"""
+Configuración de la instancia Celery y del scheduler Beat.
+
+Define la conexión al broker Redis, el autodiscovery de tareas
+en src.workers.tasks, y la programación de tareas periódicas:
+  - verificar_vencimientos: cada VERIFICATION_INTERVAL_SECONDS segundos.
+  - limpiar_notificaciones_antiguas: una vez por día a las 3 AM.
+"""
+
 from celery import Celery
 from celery.schedules import crontab
 

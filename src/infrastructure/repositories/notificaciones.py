@@ -1,3 +1,11 @@
+"""
+Repositorio de notificaciones — operaciones asincrónicas.
+
+Todas las funciones de este módulo son async porque las consume
+exclusivamente el servidor AsyncIO. Usan aiomysql a través de
+la conexión async que les pasa el servidor.
+"""
+
 async def guardar_notificacion(conn, farmacia_id: int, tipo: str, mensaje: str) -> dict:
     """
     Versión async para usar desde el servidor si fuera necesario.
@@ -46,67 +54,3 @@ async def ver_notificaciones(conn, farmacia_id: int, solo_no_leidas: bool = Fals
             for fila in filas
         ]
     }
-
-
-def guardar_notificacion_sync(conn, farmacia_id: int, tipo: str, mensaje: str) -> None:
-    """
-    Versión sync para usar desde los workers de Celery.
-    """
-    with conn.cursor() as cursor:
-        cursor.execute(
-            "INSERT INTO notificaciones (farmacia_id, tipo, mensaje) VALUES (%s, %s, %s)",
-            (farmacia_id, tipo, mensaje)
-        )
-        
-
-def verificar_notificacion_reciente_sync(conn, farmacia_id: int, codigo_medicamento: str) -> bool:
-    """
-    Devuelve True si ya existe una notificación de tipo 'proximo_vencimiento'
-    para este medicamento generada en las últimas 24 horas.
-
-    Usamos LIKE '%codigo%' en el mensaje porque no guardamos el código como
-    campo separado en la tabla notificaciones: está embebido dentro del texto
-    del mensaje.
-
-    Las 24 horas como ventana es una decisión de negocio..
-    """
-    with conn.cursor() as cursor:
-        cursor.execute(
-            """
-            SELECT COUNT(*) FROM notificaciones
-            WHERE farmacia_id = %s
-              AND tipo = 'proximo_vencimiento'
-              AND mensaje LIKE %s
-              AND creado_en >= NOW() - INTERVAL 24 HOUR
-            """,
-            (farmacia_id, f"%{codigo_medicamento}%")
-        )
-        (cantidad,) = cursor.fetchone()
-    return cantidad > 0
-
-def limpiar_notificaciones_antiguas_sync(conn, retention_days: int) -> int:
-    """
-    Elimina físicamente las notificaciones que cumplen dos condiciones:
-      1. Ya fueron leídas (leida = TRUE).
-      2. Tienen más de retention_days días de antigüedad.
-
-    Es la única operación del sistema que hace eliminación física.
-    La justificación es que una notificación leída y antigua ya cumplió
-    su propósito: la farmacia la vio y el período de consulta razonable
-    pasó. Preservarla indefinidamente solo infla la tabla sin valor.
-
-    Las notificaciones no leídas nunca se eliminan porque todavía
-    tienen valor para la farmacia, sin importar su antigüedad.
-
-    Devuelve la cantidad de registros eliminados para el log.
-    """
-    with conn.cursor() as cursor:
-        cursor.execute(
-            """
-            DELETE FROM notificaciones
-            WHERE leida = TRUE
-              AND creado_en < NOW() - INTERVAL %s DAY
-            """,
-            (retention_days,)
-        )
-        return cursor.rowcount
