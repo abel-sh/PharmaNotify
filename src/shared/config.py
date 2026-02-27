@@ -20,7 +20,7 @@ load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
 # =============================================================================
 # Servidor TCP
 # =============================================================================
-SERVER_HOST = os.getenv("SERVER_HOST", "localhost")
+SERVER_HOST = os.getenv("SERVER_HOST", "")
 SERVER_PORT  = int(os.getenv("SERVER_PORT", 9999))  # int() porque getenv devuelve strings
 
 MONITOR_SOCKET_PATH = os.getenv("MONITOR_SOCKET_PATH", "/tmp/pharma_monitor.sock")
