@@ -20,7 +20,7 @@ import json
 import os
 
 from src.shared import (
-    SERVER_HOST, SERVER_PORT,
+    SERVER_LISTEN_HOST, SERVER_PORT,
     REDIS_NOTIFICATIONS_CHANNEL,
     MONITOR_SOCKET_PATH,
     enviar_mensaje, recibir_mensaje,
@@ -554,8 +554,8 @@ def parsear_argumentos():
     )
     parser.add_argument(
         "--host",
-        default=SERVER_HOST,
-        help=f"Host donde escuchar conexiones (default: {SERVER_HOST})"
+        default=SERVER_LISTEN_HOST,
+        help=f"Host donde escuchar conexiones (default: todas las interfaces)"
     )
     parser.add_argument(
         "--puerto",
