@@ -523,8 +523,11 @@ async def iniciar_servidor(host: str, puerto: int, socket_path: str):
       2. servidor IPC  → atiende al monitor administrador
       3. escucha Redis → reenvía notificaciones a clientes conectados
     """
-    servidor = await asyncio.start_server(manejar_cliente, host, puerto)
-    logger.info(f"Servidor PharmaNotify escuchando en {host}:{puerto}")
+    host_efectivo = host if host else None
+
+
+    servidor = await asyncio.start_server(manejar_cliente, host_efectivo, puerto)
+    logger.info(f"Servidor PharmaNotify escuchando en {host_efectivo}:{puerto}")
 
     tarea_redis  = asyncio.create_task(escuchar_notificaciones_redis())
     tarea_ipc    = asyncio.create_task(escuchar_monitor_ipc(socket_path))
