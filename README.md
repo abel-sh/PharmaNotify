@@ -6,6 +6,8 @@ El sistema tiene dos roles: las **farmacias**, que usan el cliente CLI para gest
 
 ![Arquitectura del sistema](docs/img/arquitectura.png)
 
+> Para instalar y poner en marcha el sistema, seguí las instrucciones en [INSTALL.md](docs/INSTALL.md).
+
 ---
 
 ## Conectarse como farmacia
@@ -87,3 +89,45 @@ El monitor se comunica con el servidor a través de un Unix Domain Socket. Si el
 **Sistema:** podés consultar qué farmacias están conectadas en este momento y ver estadísticas generales del sistema como cantidad de medicamentos activos, próximos a vencer, y notificaciones generadas hoy.
 
 **Tareas:** podés forzar la ejecución inmediata de la verificación de vencimientos o de la limpieza de notificaciones antiguas, sin esperar al próximo ciclo programado de Celery Beat.
+
+---
+
+## Estructura del proyecto
+
+```
+PharmaNotify/
+├── src/
+│   ├── server/              # Servidor AsyncIO (TCP + IPC)
+│   │   └── server.py
+│   ├── client/              # Cliente CLI de farmacias
+│   │   ├── client.py
+│   │   └── ui.py
+│   ├── monitor/             # Monitor administrativo (IPC)
+│   │   ├── monitor.py
+│   │   └── ui.py
+│   ├── workers/             # Tareas distribuidas de Celery
+│   │   ├── celery_app.py
+│   │   └── tasks.py
+│   ├── infrastructure/      # Capa de acceso a datos
+│   │   ├── clients/         # Conexiones a MariaDB y Redis
+│   │   └── repositories/    # Operaciones por entidad (farmacias, medicamentos, notificaciones)
+│   ├── shared/              # Código común a todos los componentes
+│   │   ├── config.py        # Variables de entorno centralizadas
+│   │   ├── protocol.py      # Protocolo TCP con prefijo de longitud
+│   │   ├── logger.py        # Logger estructurado
+│   │   └── exceptions.py    # Excepciones del dominio
+│   └── utils/               # Utilidades de entrada de usuario
+├── docs/                    # Documentación
+│   ├── INSTALL.md
+│   ├── INFO.md
+│   ├── TODO.md
+│   └── img/                 # Diagramas de arquitectura y entidades
+├── docker/
+│   └── schema.sql           # Inicialización de tablas para Docker
+├── scripts/
+│   └── init_db.sh           # Inicialización de tablas para entorno local
+├── Dockerfile
+├── docker-compose.yml
+├── .env.example
+└── requirements.txt
+```
