@@ -20,7 +20,15 @@ load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
 # =============================================================================
 # Servidor TCP
 # =============================================================================
-SERVER_HOST = os.getenv("SERVER_HOST", "")
+
+# Host donde el servidor escucha conexiones.
+# "" significa "todas las interfaces" (se convierte a None para asyncio).
+SERVER_LISTEN_HOST = os.getenv("SERVER_LISTEN_HOST", "")
+
+# Host al que el cliente se conecta por defecto.
+# "localhost" es el caso más común: servidor y cliente en la misma máquina.
+# Se puede sobreescribir con --host al ejecutar el cliente.
+SERVER_CONNECT_HOST = os.getenv("SERVER_CONNECT_HOST", "localhost")
 SERVER_PORT  = int(os.getenv("SERVER_PORT", 9999))  # int() porque getenv devuelve strings
 
 MONITOR_SOCKET_PATH = os.getenv("MONITOR_SOCKET_PATH", "/tmp/pharma_monitor.sock")

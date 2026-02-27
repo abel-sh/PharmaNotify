@@ -15,7 +15,7 @@ import asyncio
 import argparse
 
 from src.shared import (
-    SERVER_HOST, SERVER_PORT,
+    SERVER_CONNECT_HOST, SERVER_PORT,
     enviar_mensaje, recibir_mensaje,
     obtener_logger
 )
@@ -278,7 +278,13 @@ async def iniciar_cliente(host: str, puerto: int, nombre_farmacia: str) -> None:
     try:
         reader, writer = await asyncio.open_connection(host, puerto)
     except ConnectionRefusedError:
-        print("No se pudo conectar al servidor. ¿Está corriendo?")
+        print(f"La conexión a {host}:{puerto} fue rechazada. ¿Está corriendo el servidor?")
+        return
+    except OSError as e:
+        print(f"No se pudo conectar a {host}:{puerto} — {e}")
+        return
+    except TimeoutError:
+        print(f"La conexión a {host}:{puerto} expiró. Verificá que la dirección sea correcta y que el servidor esté accesible.")
         return
 
     # Handshake: enviamos el nombre de farmacia al servidor
@@ -336,8 +342,8 @@ def parsear_argumentos():
     )
     parser.add_argument(
         "--host",
-        default=SERVER_HOST,
-        help=f"Host del servidor (default: {SERVER_HOST})"
+        default=SERVER_CONNECT_HOST,
+        help=f"Host del servidor (default: {SERVER_CONNECT_HOST})"
     )
     parser.add_argument(
         "--puerto",
