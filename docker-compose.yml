@@ -1,0 +1,124 @@
+services:
+
+  mariadb:
+    image: mariadb:11
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root_pharma_pass}
+      MYSQL_DATABASE: ${DB_NAME:-pharma_db}
+      MYSQL_USER: ${DB_USER:-pharma_user}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-pharma_pass}
+    volumes:
+      - pharma_db_data:/var/lib/mysql
+      - ./docker/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro  # corregido
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost",
+            "-u", "${DB_USER:-pharma_user}", "-p${DB_PASSWORD:-pharma_pass}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  server:
+    build: .
+    restart: unless-stopped
+    command: python -m src.server.server
+    environment:
+      DB_HOST: mariadb
+      REDIS_HOST: redis
+      SERVER_LISTEN_HOST: "0.0.0.0"
+      SERVER_PORT: ${SERVER_PORT:-9999}
+      DB_PORT: 3306
+      DB_NAME: ${DB_NAME:-pharma_db}
+      DB_USER: ${DB_USER:-pharma_user}
+      DB_PASSWORD: ${DB_PASSWORD:-pharma_pass}
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+      REDIS_NOTIFICATIONS_CHANNEL: ${REDIS_NOTIFICATIONS_CHANNEL:-pharma:notifications}
+      VERIFICATION_INTERVAL_SECONDS: ${VERIFICATION_INTERVAL_SECONDS:-60}
+      DEFAULT_ALERT_THRESHOLD_DAYS: ${DEFAULT_ALERT_THRESHOLD_DAYS:-7}
+      NOTIFICATION_RETENTION_DAYS: ${NOTIFICATION_RETENTION_DAYS:-30}
+      MONITOR_SOCKET_PATH: /sockets/pharma_monitor.sock
+    ports:
+      - "${SERVER_PORT:-9999}:9999"
+    volumes:
+      - pharma_sockets:/sockets
+    depends_on:
+      mariadb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery-worker:
+    build: .
+    restart: unless-stopped
+    command: celery -A src.workers.celery_app worker --loglevel=info
+    environment:
+      DB_HOST: mariadb
+      REDIS_HOST: redis
+      DB_PORT: ${DB_PORT:-3306}
+      DB_NAME: ${DB_NAME:-pharma_db}
+      DB_USER: ${DB_USER:-pharma_user}
+      DB_PASSWORD: ${DB_PASSWORD:-pharma_pass}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_DB: ${REDIS_DB:-0}
+      REDIS_NOTIFICATIONS_CHANNEL: ${REDIS_NOTIFICATIONS_CHANNEL:-pharma:notifications}
+      VERIFICATION_INTERVAL_SECONDS: ${VERIFICATION_INTERVAL_SECONDS:-60}
+      DEFAULT_ALERT_THRESHOLD_DAYS: ${DEFAULT_ALERT_THRESHOLD_DAYS:-7}
+      NOTIFICATION_RETENTION_DAYS: ${NOTIFICATION_RETENTION_DAYS:-30}
+    depends_on:
+      mariadb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery-beat:
+    build: .
+    restart: unless-stopped
+    command: celery -A src.workers.celery_app beat --loglevel=info
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+      VERIFICATION_INTERVAL_SECONDS: ${VERIFICATION_INTERVAL_SECONDS:-60}
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  monitor:
+    build: .
+    profiles: ["admin"]
+    command: python -m src.monitor.monitor
+    environment:
+      MONITOR_SOCKET_PATH: /sockets/pharma_monitor.sock
+    volumes:
+      - pharma_sockets:/sockets
+    stdin_open: true
+    tty: true
+    depends_on:
+      - server
+
+  client:
+    build: .
+    profiles: ["client"]
+    entrypoint: python -m src.client.client
+    stdin_open: true
+    tty: true
+    environment:
+      SERVER_CONNECT_HOST: server
+      SERVER_PORT: ${SERVER_PORT:-9999}
+    depends_on:
+      - server
+
+volumes:
+  pharma_db_data:
+  pharma_sockets:
