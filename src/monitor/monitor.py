@@ -20,7 +20,7 @@ from src.shared import (
     obtener_logger
 )
 
-from src.utils.exceptions import OperacionCancelada
+from src.shared.exceptions import OperacionCancelada
 from src.utils.input_utils import input_async, input_requerido
 from src.monitor.ui import mostrar_menu, mostrar_respuesta
 

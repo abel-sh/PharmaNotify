@@ -8,7 +8,7 @@ con las mismas necesidades de validación.
 
 import asyncio
 from datetime import datetime
-from src.utils.exceptions import OperacionCancelada
+from src.shared.exceptions import OperacionCancelada
 
 
 async def input_async(prompt: str = "") -> str:
